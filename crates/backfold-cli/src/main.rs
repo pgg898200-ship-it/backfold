@@ -1192,17 +1192,40 @@ fn read_csv_columns(
     Ok((ts, vals))
 }
 
+const DIGEST_USAGE: &str =
+    "backfold digest <file.csv> [--time-col N] [--value-col N] [--top-k N] [--threshold X] [--json]";
+const DRILL_USAGE: &str =
+    "backfold drill <file.csv> [--start TS] [--end TS] [--time-col N] [--value-col N]";
+
 fn print_help() {
     println!(
-        "backfold {} — O(log T) out-of-order streaming inference, RTS smoothing, MCP server & stream compression\n",
+        "backfold {} — update statistics when old readings change",
         env!("CARGO_PKG_VERSION")
     );
-    println!("USAGE:");
-    println!("  backfold demo");
-    println!("  backfold bench [--json]");
-    println!("  backfold digest <file.csv> [--time-col 0] [--value-col 1] [--top-k 5] [--threshold 10.0] [--json]");
-    println!("  backfold drill <file.csv> --start <ts> --end <ts> [--time-col 0] [--value-col 1]");
-    println!("  backfold mcp                      Run zero-dependency stdio MCP JSON-RPC 2.0 server");
+    println!();
+    println!("  backfold demo           Run seven streaming inference examples");
+    println!("  backfold bench [--json] Measure late edits and range queries");
+    println!("  backfold mcp            Start the MCP server on stdin and stdout");
+    println!();
+    println!("Summarize a CSV and rank windows to inspect (top 5, CUSUM threshold 10 by default).");
+    println!("  {DIGEST_USAGE}");
+    println!("Read observations and summary statistics for an inclusive timestamp range.");
+    println!("  {DRILL_USAGE}");
+    println!("Both commands read timestamps from column 0 and values from column 1 by default.");
+}
+
+fn usage_error(message: impl std::fmt::Display) -> ! {
+    eprintln!("{message}");
+    std::process::exit(2);
+}
+
+fn option_value<T: std::str::FromStr>(flag: &str, value: Option<&String>, expected: &str) -> T {
+    let raw = value.unwrap_or_else(|| usage_error(format_args!("{flag} requires {expected}")));
+    raw.parse().unwrap_or_else(|_| {
+        usage_error(format_args!(
+            "invalid value '{raw}' for {flag}: expected {expected}"
+        ))
+    })
 }
 
 fn main() {
@@ -1224,42 +1247,26 @@ fn main() {
             run_bench_suite(as_json);
         }
         "digest" => {
-            if args.len() < 3 {
-                eprintln!("usage: backfold digest <file.csv> [--time-col 0] [--value-col 1] [--top-k 5] [--threshold 10.0] [--json]");
-                std::process::exit(2);
-            }
-            let path = &args[2];
+            let path = args.get(2).unwrap_or_else(|| usage_error(DIGEST_USAGE));
             let mut time_col = 0usize;
             let mut value_col = 1usize;
             let mut top_k = 5usize;
             let mut threshold = 10.0f64;
             let mut as_json = false;
-            let mut i = 3;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--time-col" => {
-                        i += 1;
-                        time_col = args[i].parse().expect("invalid --time-col");
-                    }
+            let mut options = args[3..].iter();
+            while let Some(flag) = options.next() {
+                match flag.as_str() {
+                    "--time-col" => time_col = option_value(flag, options.next(), "a column index"),
                     "--value-col" => {
-                        i += 1;
-                        value_col = args[i].parse().expect("invalid --value-col");
+                        value_col = option_value(flag, options.next(), "a column index")
                     }
                     "--top-k" => {
-                        i += 1;
-                        top_k = args[i].parse().expect("invalid --top-k");
+                        top_k = option_value(flag, options.next(), "a non-negative integer")
                     }
-                    "--threshold" => {
-                        i += 1;
-                        threshold = args[i].parse().expect("invalid --threshold");
-                    }
+                    "--threshold" => threshold = option_value(flag, options.next(), "a number"),
                     "--json" => as_json = true,
-                    other => {
-                        eprintln!("unknown flag: {other}");
-                        std::process::exit(2);
-                    }
+                    _ => usage_error(format_args!("unknown flag: {flag}")),
                 }
-                i += 1;
             }
             let (ts, vals) = read_csv_columns(path, time_col, value_col).unwrap_or_else(|e| {
                 eprintln!("error: {e}");
@@ -1276,40 +1283,22 @@ fn main() {
             }
         }
         "drill" => {
-            if args.len() < 3 {
-                eprintln!("usage: backfold drill <file.csv> --start <ts> --end <ts>");
-                std::process::exit(2);
-            }
-            let path = &args[2];
+            let path = args.get(2).unwrap_or_else(|| usage_error(DRILL_USAGE));
             let mut start = i64::MIN;
             let mut end = i64::MAX;
             let mut time_col = 0usize;
             let mut value_col = 1usize;
-            let mut i = 3;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--start" => {
-                        i += 1;
-                        start = args[i].parse().expect("invalid --start");
-                    }
-                    "--end" => {
-                        i += 1;
-                        end = args[i].parse().expect("invalid --end");
-                    }
-                    "--time-col" => {
-                        i += 1;
-                        time_col = args[i].parse().expect("invalid --time-col");
-                    }
+            let mut options = args[3..].iter();
+            while let Some(flag) = options.next() {
+                match flag.as_str() {
+                    "--start" => start = option_value(flag, options.next(), "an integer timestamp"),
+                    "--end" => end = option_value(flag, options.next(), "an integer timestamp"),
+                    "--time-col" => time_col = option_value(flag, options.next(), "a column index"),
                     "--value-col" => {
-                        i += 1;
-                        value_col = args[i].parse().expect("invalid --value-col");
+                        value_col = option_value(flag, options.next(), "a column index")
                     }
-                    other => {
-                        eprintln!("unknown flag: {other}");
-                        std::process::exit(2);
-                    }
+                    _ => usage_error(format_args!("unknown flag: {flag}")),
                 }
-                i += 1;
             }
             let (ts, vals) = read_csv_columns(path, time_col, value_col).unwrap_or_else(|e| {
                 eprintln!("error: {e}");
