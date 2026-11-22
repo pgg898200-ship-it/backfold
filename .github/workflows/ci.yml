@@ -43,9 +43,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install build & test dependencies
         run: pip install maturin pytest ruff numpy scipy pandas polars river
-      - name: Build native extension wheel
-        run: maturin develop --release
+      - name: Build & install native extension wheel
+        run: |
+          maturin build --release --out dist
+          pip install --force-reinstall dist/*.whl
       - name: Run pytest parity suite
+        env:
+          PYTHONPATH: .
         run: pytest -v tests/
       - name: Lint with ruff
         run: ruff check python/ benchmarks/ tests/
