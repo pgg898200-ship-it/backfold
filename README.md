@@ -1,3 +1,5 @@
+<img align="right" src="docs/product-mark.svg" width="88" height="88" alt="A replacement panel fits into a folded history of readings.">
+
 # Backfold
 
 **Update a time-series statistic when an old reading changes.** Backfold is a Rust library with Python bindings. Feed it timestamped observations from your event consumer. When a sensor sends a correction, Backfold updates the affected summaries so your dashboard, model or alert can read the revised answer.
