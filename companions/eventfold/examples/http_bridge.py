@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from http import HTTPStatus
+from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import sys
@@ -95,8 +96,12 @@ def make_handler(upstream: str, key: str | None):
                 writer = ChunkWriter(self.wfile)
                 try:
                     pack_stream(response, writer)
+                    # HTTPResponse.read1 may return EOF with a nonzero declared
+                    # length remaining. Keep that transport failure visible.
+                    if response.length not in (None, 0):
+                        raise OSError("incomplete upstream HTTP body")
                     writer.finish()
-                except (OSError, ValueError):
+                except (OSError, ValueError, HTTPException):
                     # Closing without the terminating HTTP chunk signals a
                     # partial transfer to the downstream reader.
                     self.log_error("stream interrupted")

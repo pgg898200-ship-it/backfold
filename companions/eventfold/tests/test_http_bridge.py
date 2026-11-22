@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from http.client import IncompleteRead
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 from pathlib import Path
@@ -62,3 +63,22 @@ class HTTPBridgeTest(unittest.TestCase):
         self.assertTrue(observed["last_event_released_by_client"])
         self.assertEqual(observed["body"], payload)
         self.assertEqual(observed["authorization"], "Bearer demo-only")
+
+    def test_truncated_upstream_body_invalidates_http_transfer(self):
+        class Origin(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", "90")
+                self.end_headers()
+                self.wfile.write(b"data: first\n\n")
+
+            def log_message(self, *_):
+                pass
+
+        with serving(Origin) as upstream:
+            with serving(bridge.make_handler(upstream, None)) as gateway:
+                with urlopen(Request(gateway, data=b"{}"), timeout=5) as response:
+                    with self.assertRaises(IncompleteRead):
+                        response.read()

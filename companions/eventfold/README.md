@@ -9,7 +9,7 @@ python -m pip install 'git+https://github.com/pgg898200-ship-it/backfold.git@eve
 python -m eventfold compare < capture.sse
 ```
 
-The C99 hot path is a single header with no allocation or runtime dependencies. The Python implementation and native filter use the same wire format. The browser inspector lets you paste text or open a file locally and inspect every reconstructed frame. [Live browser inspector](https://eventfold.tancurl3.chatgpt.site) · [Wire specification](docs/format.md) · [Protocol and SDK fixtures](fixtures/README.md)
+The C99 hot path is a single header with no allocation or runtime dependencies. The Python implementation and native filter use the same wire format. The browser inspector lets you paste text or open a file locally and inspect every reconstructed frame. [Live browser inspector](https://eventfold.tancurl3.chatgpt.site) · [Hugging Face Space](https://huggingface.co/spaces/pgg-engineering/eventfold) · [Wire specification](docs/format.md) · [Protocol and SDK fixtures](fixtures/README.md)
 
 ## Use it in an inference gateway
 
