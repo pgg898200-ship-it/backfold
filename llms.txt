@@ -4,10 +4,11 @@
 
 ## Choose an entry point
 
-- [Python quickstart](https://github.com/pgg898200-ship-it/backfold#correct-one-reading-in-python) — Install with `python -m pip install backfold`. Create a `MomentsStream`, edit an event with `upsert`, read `summary()` and fork to keep an earlier version.
+- [Python quickstart](https://github.com/pgg898200-ship-it/backfold#correct-one-reading-in-python) — Install with `python -m pip install backfold`. Create a `MomentsStream`, edit an event with `upsert`, read `summary()` and fork to keep an earlier version. [Read the quickstart as raw Markdown](https://raw.githubusercontent.com/pgg898200-ship-it/backfold/main/README.md).
 - [Interactive example](https://pgg898200-ship-it.github.io/backfold/) — Change an earlier sensor reading and inspect the revised Kalman estimate in the browser.
 - [API reference](https://pgg898200-ship-it.github.io/backfold/llms-full.txt) — Event keys, method signatures, input shapes and operator-specific costs. Search for `KalmanStream`, `CovarianceStream`, `CusumStream`, `EwmaStream`, `RidgeStream`, `EProcessStream` or `BitemporalMoments`.
-- [CLI and MCP setup](https://github.com/pgg898200-ship-it/backfold#give-an-agent-a-csv) — Build the native binary with Cargo. Run `backfold mcp` over stdio. Use `backfold_digest_csv` for candidate windows and `backfold_drill_csv` with the retained CSV for exact rows.
+- [Desktop MCP bundle](https://github.com/pgg898200-ship-it/backfold/releases/download/v0.3.0/backfold-0.3.0.mcpb) — Install Backfold 0.3.0 in a client that accepts MCP bundles on Apple Silicon macOS, Windows x86-64 or Linux x86-64. [Official registry metadata](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.pgg898200-ship-it%2Fbackfold/versions/0.3.0) · [Four-row CSV example](https://github.com/pgg898200-ship-it/backfold/blob/main/integrations/mcpb/README.md).
+- [CLI and manual MCP setup](https://github.com/pgg898200-ship-it/backfold#give-an-agent-a-csv) — Build with Cargo and run `backfold mcp` over stdio. Use `backfold_digest_csv` for candidate windows and `backfold_drill_csv` to read the observations in a window. The 0.3.0 executable displays each numeric reading to six decimal places.
 - [Coding-agent skill](https://github.com/pgg898200-ship-it/backfold/blob/main/skills/backfold/SKILL.md) — Task-specific invocation guidance.
 - [Runnable recipes](https://github.com/pgg898200-ship-it/backfold/tree/main/examples) — RTS smoothing, PCA, anomaly scoring, bitemporal access and screening across streams.
 
