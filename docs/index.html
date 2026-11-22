@@ -111,22 +111,63 @@
     .cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem; }
     .table-scroll { overflow-x: auto; }
     footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--border); font-size: .84rem; color: var(--muted); }
+    body {font-family: 'Instrument Sans', system-ui, sans-serif}
+    .wrap {padding-top: 1.1rem; max-width: 1080px}
+    .mast, .mast nav, .actions {display:flex; align-items:center; gap:1.1rem; flex-wrap:wrap}
+    .mast {justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:.8rem}
+    .mast a,.actions a {color:var(--fg); font-weight:600}
+    .wordmark {font: bold 1.5rem Georgia,serif; letter-spacing:-.07em}
+    .intro {display:grid; grid-template-columns:minmax(0,1.6fr) minmax(220px,.82fr); gap:clamp(1rem,6vw,4.4rem); align-items:center; padding:clamp(2.2rem,5vw,4.5rem) 0 1.8rem}
+    .intro h1 {font: 500 clamp(2.7rem,5.8vw,5.3rem)/.99 'Instrument Serif',Georgia,serif; letter-spacing:-.06em; margin:0 0 1.1rem}
+    .intro em {color:var(--accent); font-weight:400}
+    .intro .lead {max-width:47ch; line-height:1.5}
+    .actions .action {color:#fff; background:#874025; border-radius:5px; padding:.68rem 1.05rem}
+    .action span {margin-left:.5em}
+    .receipt {margin:0; background:#263d33; color:#fbf8ed; padding:1.25rem 1.4rem; border-radius:4px}
+    .receipt figcaption {display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:.3rem; font:italic 1.45rem Georgia,serif}
+    .receipt figcaption span {font: .75rem ui-monospace,monospace; color:#bfccb9}
+    .receipt table {font-size:.9rem; margin:1rem 0 0}
+    .receipt td,.receipt th {color:inherit; border-color:#5b6b5e; padding:.45rem .32rem}
+    .receipt thead th {color:#d3dacf; font-size:.73rem}
+    .receipt .changed {background:#3e5947; color:#e1ffb0}
+    .receipt tfoot td,.receipt tfoot th {border:0; font-weight:700; padding-top:.8rem}
+    .receipt tfoot td {font-size:1.3rem}
+    .pg-title {font: 600 1.25rem Georgia,serif}
+    .pg-title .pg-status {font-weight:400}
+    .cols2 {grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
+    .table-scroll {overflow:auto}
+    :focus-visible {outline:3px solid #b05725; outline-offset:3px}
+    @media (max-width:650px) {
+      .intro {grid-template-columns:1fr; gap:1.4rem}
+      .receipt {max-width:100%}
+      .playground {padding:.9rem}
+      .pg-title {flex-wrap:wrap}
+      .pg-stats {grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <h1>Backfold</h1>
-    <p class="lead"><strong>Update a time-series statistic when an old reading changes.</strong> This sensor stream has 20,000 readings. Add a late reading, then compare the revised trajectory with a full replay.</p>
-    <nav class="links" aria-label="Backfold resources">
-      <a href="https://github.com/pgg898200-ship-it/backfold#correct-one-reading-in-python">Python quickstart</a>
-      <a href="https://github.com/pgg898200-ship-it/backfold">Source on GitHub</a>
-      <a href="./llms.txt">Agent guide</a>
-      <a href="./llms-full.txt">API reference</a>
-      <a href="./results.json">Benchmark data</a>
-    </nav>
+  <main class="wrap" id="top">
+    <header class="mast">
+      <a class="wordmark" href="#top">Backfold</a>
+      <nav aria-label="Documentation"><a href="https://github.com/pgg898200-ship-it/backfold">GitHub</a><a href="./llms.txt">Agent guide</a></nav>
+    </header>
+    <section class="intro" aria-labelledby="title">
+      <div>
+        <h1 id="title">A late correction.<br><em>A revised estimate.</em></h1>
+        <p class="lead">Feed timestamped observations into Backfold. Correct or withdraw an old value, then query the updated statistics. Fork the stream to keep both histories.</p>
+        <div class="actions"><a class="action" href="#playground">Edit a sensor reading <span aria-hidden="true">↓</span></a><a href="https://github.com/pgg898200-ship-it/backfold#correct-one-reading-in-python">Run the Python example</a></div>
+      </div>
+      <figure class="receipt">
+        <figcaption>One correction <span>MomentsStream</span></figcaption>
+        <table><thead><tr><th scope="col">Time</th><th scope="col">Observed</th><th scope="col">Fork</th></tr></thead>
+        <tbody><tr><th scope="row">10</th><td>4</td><td>4</td></tr><tr class="changed"><th scope="row">20</th><td>40</td><td>7</td></tr><tr><th scope="row">30</th><td>10</td><td>10</td></tr></tbody>
+        <tfoot><tr><th scope="row">Mean</th><td>18.0</td><td>7.0</td></tr></tfoot></table>
+      </figure>
+    </section>
 
     <!-- LIVE REAL-RUST WEBASSEMBLY INTERACTIVE PLAYGROUND -->
-    <section class="playground" aria-label="Live WebAssembly Playground">
+    <section id="playground" class="playground" aria-label="Live WebAssembly Playground">
       <div class="pg-head">
         <div class="pg-title">
           <span>Edit the sensor stream</span>
@@ -135,7 +176,7 @@
       </div>
 
       <div class="pg-controls">
-        <button class="btn primary" id="btnGlitch" disabled>Add a late reading (+15&sigma;)</button>
+        <button class="btn primary" id="btnGlitch" disabled>Change reading 6,666</button>
         <button class="btn" id="btnRetract" disabled>Retract that reading</button>
         <button class="btn" id="btnShock" disabled>Move the changepoint</button>
         <button class="btn primary" id="btnBench" disabled>Compare with full replay</button>
@@ -145,7 +186,7 @@
 
       <div class="pg-stats">
         <div class="stat">
-          <div class="l">Last WASM O(log T) Op</div>
+          <div class="l">Last measured operation</div>
           <div class="val" id="stLatency">--</div>
           <div class="sub" id="stOpNote">20,000-tick FoldTree&lt;KalmanFilter2D, 4&gt;</div>
         </div>
@@ -174,10 +215,10 @@
       </div>
 
       <div class="canvas-box">
-        <canvas id="trajCanvas" height="270"></canvas>
+        <canvas id="trajCanvas" height="270" role="img" aria-label="Observed, filtered, and smoothed sensor readings over time. Use the buttons above to change or withdraw reading 6,666."></canvas>
       </div>
       <div class="canvas-box">
-        <canvas id="bfCanvas" height="110"></canvas>
+        <canvas id="bfCanvas" height="110" role="img" aria-label="Changepoint evidence by observation time"></canvas>
       </div>
       <p class="pg-hint">
         Running real compiled Rust <code>backfold-core</code> (<code>backfold_wasm.wasm</code>, zero backend server). <strong>Click anywhere on the top plot</strong> to inject a late-arriving sensor reading; <strong>Shift+Click</strong> to retract that tick into a missing-observation transition step.
@@ -237,6 +278,7 @@
     </p>
 
     <footer>
+      <nav class="links" aria-label="Further reading"><a href="https://github.com/pgg898200-ship-it/backfold/blob/main/docs/PRODUCTS.md">Compare related PGG tools</a><a href="./results.json">Benchmark data</a><a href="./llms-full.txt">API reference</a></nav>
       Apache-2.0 &middot; AI agent discovery: <a href="./llms.txt">/llms.txt</a> &middot; <a href="./llms-full.txt">/llms-full.txt</a> &middot; <a href="./SKILL.md">/SKILL.md</a> &middot; <a href="./robots.txt">/robots.txt</a> &middot; <a href="./sitemap.xml">/sitemap.xml</a>
     </footer>
   </main>
@@ -539,7 +581,7 @@
       const snap = wasmExec({ cmd: "upsert", t: 6666, y: basePt.smoothed + 15.0, query_t: 6666, n_plot: 160, n_scan: 64 });
       const dtMs = performance.now() - t0;
       render(snap, dtMs.toFixed(2) + " ms (upsert+160 RTS)");
-      $("stOpNote").textContent = "Injected +15σ late glitch @ t=6,666 (compare with full replay for timings)";
+      $("stOpNote").textContent = "Changed reading 6,666 to the nearby smoothed estimate plus 15 units.";
     });
 
     $("btnRetract").addEventListener("click", () => {
