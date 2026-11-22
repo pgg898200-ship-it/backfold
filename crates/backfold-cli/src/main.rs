@@ -1323,7 +1323,7 @@ fn main() {
                 sub.max
             );
             for (k, m) in tree.iter_range(EventKey::time_start(start), EventKey::time_end(end)) {
-                println!("{},{:.6}", k.event_time, m.mean);
+                println!("{},{:?}", k.event_time, m.mean);
             }
         }
         other => {
