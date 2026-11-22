@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::thread;
 
 use backfold_core::ops::{
-    ebh_reject, CusumMonoid, EProcessMonoid, EwmaMonoid, KalmanFilter1D, KalmanFilter2D,
-    KalmanMonoid, MomentsMonoid, RidgeMonoid,
+    ebh_reject, smooth_1d, smooth_2d, smooth_nd, CovarianceMonoid, CusumMonoid, EProcessMonoid,
+    EwmaMonoid, KalmanFilter1D, KalmanFilter2D, KalmanMonoid, MomentsMonoid, RidgeMonoid,
 };
 use backfold_core::{BackfoldError, EventKey, FoldTree, Monoid};
 use rand::rngs::StdRng;
@@ -507,4 +507,280 @@ fn multithreaded_fork_and_merge_isolation() {
     assert!((fwd.summary().mean - rev.summary().mean).abs() < 1e-12);
     assert!((fwd.summary().variance() - rev.summary().variance()).abs() < 1e-12);
     assert!((fwd.summary().mean - fwd_twice.summary().mean).abs() < 1e-14);
+}
+
+// 8. Adversarial RTS Smoother + Exact Marginal Log-Likelihood across 1D, 2D, and 3D vector-obs
+// with out-of-order upserts, missing observations, retractions, boundary timestamps, and PSD
+// variance-reduction invariant (P_{t|T} <= P_{t|t}).
+#[test]
+fn rts_smoother_and_marginal_log_likelihood_adversarial() {
+    let mut rng = StdRng::seed_from_u64(0x5100_74ED);
+
+    // 1D exact parity with sequential RTS + innovation log-likelihood after late edit & retraction
+    let n = 60usize;
+    let q = 0.09;
+    let r = 0.45;
+    let m0 = 0.7;
+    let p0 = 5.0;
+    let mut ys: Vec<Option<f64>> = (0..n)
+        .map(|i| {
+            if i % 9 == 4 {
+                None
+            } else {
+                Some(0.1 * (i as f64) + rand_normal(&mut rng))
+            }
+        })
+        .collect();
+
+    let mut t1: FoldTree<KalmanFilter1D, 8> = FoldTree::new(());
+    // Insert out of order
+    for i in (0..n).rev() {
+        let leaf = match ys[i] {
+            Some(y) => KalmanFilter1D::from_random_walk(1.0, q, r, y).unwrap(),
+            None => KalmanFilter1D::from_missing(1.0, q).unwrap(),
+        };
+        t1.upsert(EventKey::at((i + 1) as i64), leaf);
+    }
+    // Overwrite a middle point & retract a point
+    ys[20] = Some(12.5);
+    t1.upsert(
+        EventKey::at(21),
+        KalmanFilter1D::from_random_walk(1.0, q, r, 12.5).unwrap(),
+    );
+    t1.retract(EventKey::at(35));
+
+    // Sequential 1D forward + RTS backward over active keys
+    let mut active_ts = Vec::new();
+    let mut mf = vec![m0];
+    let mut pf = vec![p0];
+    let mut mp = Vec::new();
+    let mut pp = Vec::new();
+    let mut seq_ll = 0.0;
+    const LN_TAU: f64 = 1.837_877_066_409_345_3;
+    for (i, &yo) in ys.iter().enumerate() {
+        let ts = (i + 1) as i64;
+        if ts == 35 {
+            continue;
+        }
+        active_ts.push(ts);
+        let m_p = *mf.last().unwrap();
+        let p_p = *pf.last().unwrap() + q;
+        mp.push(m_p);
+        pp.push(p_p);
+        if let Some(y) = yo {
+            let s = p_p + r;
+            let innov = y - m_p;
+            seq_ll += -0.5 * (LN_TAU + s.ln() + innov * innov / s);
+            let k = p_p / s;
+            mf.push(m_p + k * innov);
+            pf.push((1.0 - k) * p_p);
+        } else {
+            mf.push(m_p);
+            pf.push(p_p);
+        }
+    }
+    let ll1 = t1.summary().log_marginal_likelihood(m0, p0).unwrap();
+    assert!((ll1 - seq_ll).abs() < 1e-11, "1D ll {ll1} vs {seq_ll}");
+
+    let k_len = active_ts.len();
+    let mut ms = mf.clone();
+    let mut ps = pf.clone();
+    for idx in (0..k_len).rev() {
+        let g = pf[idx] / pp[idx];
+        ms[idx] = mf[idx] + g * (ms[idx + 1] - mp[idx]);
+        ps[idx] = pf[idx] + g * g * (ps[idx + 1] - pp[idx]);
+    }
+    // Check boundary t=0 (prior smoothed by all future data!) and every active timestamp
+    let (m_prior_s, p_prior_s) = smooth_1d(&t1, 0, m0, p0).unwrap();
+    assert!((m_prior_s - ms[0]).abs() < 1e-11);
+    assert!((p_prior_s - ps[0]).abs() < 1e-11 && p_prior_s <= p0 + 1e-12);
+    for (idx, &ts) in active_ts.iter().enumerate() {
+        let (m_got, p_got) = smooth_1d(&t1, ts, m0, p0).unwrap();
+        assert!((m_got - ms[idx + 1]).abs() < 1e-11);
+        assert!((p_got - ps[idx + 1]).abs() < 1e-11);
+        // Information inequality: smoothed variance <= filtered variance!
+        assert!(p_got <= pf[idx + 1] + 1e-11);
+    }
+
+    // 2D fast-path vs general KalmanMonoid parity on RTS smoothing & log_marginal_likelihood
+    let mut t2: FoldTree<KalmanFilter2D, 4> = FoldTree::new(());
+    let mut tn: FoldTree<KalmanMonoid, 4> = FoldTree::new(2);
+    for i in 1..=30i64 {
+        let dt = rng.gen_range(0.3..1.7);
+        let y = (i as f64) * 0.2 + rand_normal(&mut rng);
+        t2.upsert(
+            EventKey::at(i),
+            KalmanFilter2D::from_constant_velocity(dt, 0.04, 0.3, y).unwrap(),
+        );
+        tn.upsert(
+            EventKey::at(i),
+            KalmanMonoid::from_constant_velocity(dt, 0.04, 0.3, y).unwrap(),
+        );
+    }
+    let m0_2 = [0.1, -0.2];
+    let p0_2 = [4.0, 0.1, 0.1, 2.0];
+    let ll2 = t2.summary().log_marginal_likelihood(m0_2, p0_2).unwrap();
+    let lln = tn.summary().log_marginal_likelihood(&m0_2, &p0_2).unwrap();
+    assert!((ll2 - lln).abs() < 1e-11);
+    for q_t in [0i64, 1, 15, 30, i64::MAX] {
+        let (m2, p2) = smooth_2d(&t2, q_t, m0_2, p0_2).unwrap();
+        let postn = smooth_nd(&tn, q_t, &m0_2, &p0_2).unwrap();
+        for i in 0..2 {
+            assert!((m2[i] - postn.mean[i]).abs() < 1e-11);
+        }
+        for i in 0..4 {
+            assert!((p2[i] - postn.cov[i]).abs() < 1e-11);
+        }
+        // Smoothed diagonal variance <= filtered diagonal variance
+        let (_, pf2) = t2.prefix(EventKey::time_end(q_t)).posterior(m0_2, p0_2).unwrap();
+        assert!(p2[0] <= pf2[0] + 1e-11 && p2[3] <= pf2[3] + 1e-11);
+    }
+
+    // 3D vector-observation KalmanMonoid smooth_nd & log_marginal_likelihood finite & PSD
+    let f3 = [1.0, 0.5, 0.0, 0.0, 1.0, 0.5, 0.0, 0.0, 0.95];
+    let q3 = [0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.05];
+    let h23 = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let r22 = [0.2, 0.03, 0.03, 0.3];
+    let mut t3: FoldTree<KalmanMonoid, 4> = FoldTree::new(3);
+    for i in 1..=25i64 {
+        let y = [(i as f64) * 0.1 + rand_normal(&mut rng) * 0.2, rand_normal(&mut rng) * 0.3];
+        t3.upsert(
+            EventKey::at(i),
+            KalmanMonoid::from_vector_obs(3, 2, &f3, &q3, &h23, &r22, &y).unwrap(),
+        );
+    }
+    let m0_3 = [0.0; 3];
+    let p0_3 = [3.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 3.0];
+    let ll3 = t3.summary().log_marginal_likelihood(&m0_3, &p0_3).unwrap();
+    assert!(ll3.is_finite() && ll3 < 0.0);
+    let sm3 = smooth_nd(&t3, 12, &m0_3, &p0_3).unwrap();
+    let fl3 = t3.prefix(EventKey::time_end(12)).posterior(&m0_3, &p0_3).unwrap();
+    for d in 0..3 {
+        assert!(sm3.cov[d * 3 + d] <= fl3.cov[d * 3 + d] + 1e-11);
+    }
+
+    // High-offset (1e6) Anchor-Centered Gaussian Potential test: zero O(y^2/S) log_z cancellation!
+    let base = 1e6_f64;
+    let mut t_hi: FoldTree<KalmanFilter2D, 4> = FoldTree::new(());
+    let mut m_seq = [base, 0.0];
+    let mut p_seq = [10.0, 0.0, 0.0, 10.0];
+    let mut seq_ll_hi = 0.0;
+    let q_acc = 1e-3;
+    let r_obs = 0.25;
+    let q_mat = [q_acc / 3.0, q_acc / 2.0, q_acc / 2.0, q_acc];
+    for t in 0..2_000i64 {
+        let y = base + 0.05 * (t as f64) + rand_normal(&mut rng) * 0.5;
+        t_hi.upsert(
+            EventKey::at(t),
+            KalmanFilter2D::from_constant_velocity(1.0, q_acc, r_obs, y).unwrap(),
+        );
+        let mp0 = m_seq[0] + m_seq[1];
+        let mp1 = m_seq[1];
+        let pp00 = p_seq[0] + p_seq[1] + p_seq[2] + p_seq[3] + q_mat[0];
+        let pp01 = p_seq[1] + p_seq[3] + q_mat[1];
+        let pp11 = p_seq[3] + q_mat[3];
+        let s = pp00 + r_obs;
+        let innov = y - mp0;
+        seq_ll_hi += -0.5 * (LN_TAU + s.ln() + innov * innov / s);
+        let k0 = pp00 / s;
+        let k1 = pp01 / s;
+        m_seq = [mp0 + k0 * innov, mp1 + k1 * innov];
+        let a00 = 1.0 - k0;
+        let np00 = a00 * a00 * pp00 + k0 * k0 * r_obs;
+        let np01 = a00 * (pp01 - k1 * pp00) + k0 * k1 * r_obs;
+        let np11 = pp11 - 2.0 * k1 * pp01 + k1 * k1 * (pp00 + r_obs);
+        p_seq = [np00, np01, np01, np11];
+    }
+    let bf_ll_hi = t_hi
+        .summary()
+        .log_marginal_likelihood([base, 0.0], [10.0, 0.0, 0.0, 10.0])
+        .unwrap();
+    let rel = (bf_ll_hi - seq_ll_hi).abs() / seq_ll_hi.abs().max(1.0);
+    assert!(rel < 1e-11, "1e6 offset anchor-centered ll rel err {rel}");
+}
+
+// 9. CovarianceMonoid inline (dim=5) & heap (dim=10) random permutations, 1e12 offset exactness,
+// 1e150 spike eviction with zero corruption, and batch Mahalanobis parity.
+#[test]
+fn covariance_monoid_inline_heap_1e12_and_spike_eviction() {
+    let mut rng = StdRng::seed_from_u64(0xC0FA_B1E5);
+    let base = 1e12_f64;
+
+    for &dim in &[5usize, 10usize] {
+        let mut tree: FoldTree<CovarianceMonoid, 4> = FoldTree::new(dim);
+        let mut truth: BTreeMap<EventKey, Vec<f64>> = BTreeMap::new();
+
+        for _ in 0..250 {
+            let op = rng.gen_range(0..10);
+            if op < 7 || truth.len() < dim + 2 {
+                let ts = rng.gen_range(-100i64..100i64);
+                let key = EventKey::at(ts);
+                let vec: Vec<f64> = (0..dim).map(|_| base + rand_normal(&mut rng) * 2.0).collect();
+                truth.insert(key, vec.clone());
+                tree.upsert(key, CovarianceMonoid::singleton(ts, &vec).unwrap());
+            } else {
+                let keys: Vec<_> = truth.keys().copied().collect();
+                let victim = keys[rng.gen_range(0..keys.len())];
+                truth.remove(&victim);
+                assert!(tree.retract(victim).is_some());
+            }
+        }
+
+        // Insert a 1e150 catastrophic spike and then retract it -> ZERO residual corruption!
+        let spike_key = EventKey::at(999_999);
+        let spike_vec = vec![1e150; dim];
+        tree.upsert(spike_key, CovarianceMonoid::singleton(999_999, &spike_vec).unwrap());
+        assert!(tree.retract(spike_key).is_some());
+
+        // Independent centered reference covariance on exact f64 residuals (v - base)
+        let n = truth.len() as f64;
+        let centered: Vec<Vec<f64>> = truth
+            .values()
+            .map(|v| v.iter().map(|&x| x - base).collect())
+            .collect();
+        let mut ref_mean = vec![0.0; dim];
+        for row in &centered {
+            for j in 0..dim {
+                ref_mean[j] += row[j] / n;
+            }
+        }
+        let mut ref_cov = vec![0.0; dim * dim];
+        for row in &centered {
+            for i in 0..dim {
+                for j in 0..dim {
+                    ref_cov[i * dim + j] += (row[i] - ref_mean[i]) * (row[j] - ref_mean[j]) / (n - 1.0);
+                }
+            }
+        }
+        let s = tree.summary();
+        let got_cov = s.covariance(1);
+        for i in 0..(dim * dim) {
+            assert!(
+                (got_cov[i] - ref_cov[i]).abs() < 1e-10,
+                "dim={dim} cov[{i}] mismatch: {} vs {}",
+                got_cov[i],
+                ref_cov[i]
+            );
+        }
+
+        // Batch vs single Mahalanobis exact parity
+        let mut queries_flat = Vec::new();
+        let mut queries = Vec::new();
+        for _ in 0..10 {
+            let q: Vec<f64> = (0..dim).map(|_| base + rand_normal(&mut rng) * 3.0).collect();
+            queries_flat.extend_from_slice(&q);
+            queries.push(q);
+        }
+        let batch_d2 = s.mahalanobis_sq_batch(&queries_flat, 1e-5).unwrap();
+        for (q, &bd2) in queries.iter().zip(batch_d2.iter()) {
+            let sd2 = s.mahalanobis_sq(q, 1e-5).unwrap();
+            assert!((sd2 - bd2).abs() < 1e-12 && sd2 >= 0.0 && sd2.is_finite());
+        }
+    }
+
+    // NaN / Inf rejection
+    assert!(matches!(
+        CovarianceMonoid::singleton(0, &[1.0, f64::NAN]),
+        Err(BackfoldError::NonFiniteInput(_))
+    ));
 }

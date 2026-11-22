@@ -36,10 +36,12 @@ from benchmarks.oracles import (
     baseline_moments_polars,
     baseline_moments_river,
     baseline_ridge_scipy,
+    oracle_covariance_numpy,
     oracle_cusum_sequential,
     oracle_eprocess_sequential,
     oracle_ewma_numpy,
     oracle_kalman_cv_numpy,
+    oracle_kalman_rts_cv_numpy,
     oracle_moments_numpy,
     oracle_ridge_numpy,
 )
@@ -259,6 +261,53 @@ def _bench_late_updates_for_n(
             }
         )
 
+        # ---- 4b. Exact O(log T) RTS Kalman Smoother + Marginal Log-Likelihood (late edit) ----
+        query_idx = n // 2
+        m0_list = m0.tolist()
+        p0_list = p0.ravel().tolist()
+
+        def bf_rts_edit() -> tuple[list[float], list[float], float]:
+            kf.upsert_constant_velocity(int(ts[edit_idx]), float(ys_edited[edit_idx]), 1.0, 1e-3, 0.25)
+            sm_m, sm_p = kf.smooth_at(int(ts[query_idx]), m0_list, p0_list)
+            ll = kf.log_marginal_likelihood(m0_list, p0_list)
+            kf.upsert_constant_velocity(int(ts[edit_idx]), float(ys[edit_idx]), 1.0, 1e-3, 0.25)
+            return sm_m, sm_p, ll
+
+        bf_rts_us, bf_rts_p95, _ = time_us(bf_rts_edit, repeats=31, warmup=5)
+        kf.upsert_constant_velocity(int(ts[edit_idx]), float(ys_edited[edit_idx]), 1.0, 1e-3, 0.25)
+        bf_sm, bf_sp = kf.smooth_at(int(ts[query_idx]), m0_list, p0_list)
+        bf_ll = kf.log_marginal_likelihood(m0_list, p0_list)
+
+        if n <= 100_000:
+            np_rts_us, _, (oms, ops, oll) = time_us(
+                lambda: oracle_kalman_rts_cv_numpy(dts, ys_edited, 1e-3, 0.25, m0, p0, query_idx),
+                repeats=3 if n <= 10_000 else 1,
+                warmup=0 if n > 10_000 else 1,
+            )
+            err_rts = max(
+                float(np.max(np.abs(np.array(bf_sm) - oms))),
+                float(np.max(np.abs(np.array(bf_sp).reshape(2, 2) - ops))),
+                abs(bf_ll - oll) / max(abs(oll), 1.0),
+            )
+            assert err_rts < 1e-9, f"Kalman RTS parity error {err_rts}"
+        else:
+            np_rts_us = None
+            err_rts = None
+
+        rows.append(
+            {
+                "operator": "kalman_2d_rts_smooth_plus_loglik",
+                "n": n,
+                "backfold_us": round(bf_rts_us, 3),
+                "backfold_p95_us": round(bf_rts_p95, 3),
+                "numpy_seq_us": round(np_rts_us, 2) if np_rts_us is not None else None,
+                "speedup_vs_numpy_seq": round(np_rts_us / max(bf_rts_us, 1e-6), 1)
+                if np_rts_us is not None
+                else None,
+                "max_abs_diff": err_rts,
+            }
+        )
+
         # ---- 5. 8D Continuous-Time Discounted Ridge Regression (delayed label!) ----
         dim = 8
         xmat = rng.normal(0.0, 1.0, size=(n, dim))
@@ -310,6 +359,45 @@ def _bench_late_updates_for_n(
                 "speedup_vs_numpy": round(np_us / max(bf_us, 1e-6), 1),
                 "speedup_vs_scipy": round(sp_us / max(bf_us, 1e-6), 1),
                 "max_abs_diff": err_r,
+            }
+        )
+
+        # ---- 6. 8D Compensated Multivariate Covariance (late edit) ----
+        xmat_edited = xmat.copy()
+        xmat_edited[edit_idx, 0] += 5.0
+        xmat_edited[edit_idx, 3] -= 3.0
+        orig_row = xmat[edit_idx].tolist()
+        edited_row = xmat_edited[edit_idx].tolist()
+
+        covs = bf.CovarianceStream(dim=dim)
+        covs.ingest(ts, xmat)
+
+        def bf_cov_edit() -> list[list[float]]:
+            covs.upsert(int(ts[edit_idx]), edited_row)
+            cmat = covs.covariance(ddof=1)
+            covs.upsert(int(ts[edit_idx]), orig_row)
+            return cmat
+
+        bf_cov_us, bf_cov_p95, _ = time_us(bf_cov_edit, repeats=31, warmup=5)
+        covs.upsert(int(ts[edit_idx]), edited_row)
+        bf_cmat = np.array(covs.covariance(ddof=1))
+        np_cov_us, _, ocov = time_us(
+            lambda: oracle_covariance_numpy(xmat_edited, ddof=1),
+            repeats=9,
+            warmup=2,
+        )
+        err_cov = float(np.max(np.abs(bf_cmat - ocov)))
+        assert err_cov < 1e-10, f"Covariance parity error {err_cov}"
+
+        rows.append(
+            {
+                "operator": "covariance_8d_late_edit",
+                "n": n,
+                "backfold_us": round(bf_cov_us, 3),
+                "backfold_p95_us": round(bf_cov_p95, 3),
+                "numpy_us": round(np_cov_us, 2),
+                "speedup_vs_numpy": round(np_cov_us / max(bf_cov_us, 1e-6), 1),
+                "max_abs_diff": err_cov,
             }
         )
 

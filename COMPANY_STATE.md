@@ -37,11 +37,17 @@ Audited existing open-source streaming and online statistics tooling:
 - `crates/backfold-core/tests/breaker_audit.rs` caught an edge case in `RidgeMonoid::solve` where exact collinearity combined with `1e24` feature-scale mismatch caused tiny `alpha` to fall below `ulp(G_ii)`. Added an equilibrated relative-Tikhonov (`1e-12 * I` in Jacobi-scaled coordinates) fallback when `alpha > 0.0`, recovering exact minimum-norm predictions to `<1e-4`.
 - Rust's type checker caught a persistent-return bug in `backfold-py` where `self.tree.merge(&other.tree)` returns a new tree instead of mutating in place; fixed uniformly across all Python stream classes.
 
-## 3. Verified Quality Gate Status
+### Iteration 5 (`v0.2.0`) — Exact $O(\log T)$ RTS Smoother, Anchor-Centered Gaussian Potentials & Multivariate `CovarianceMonoid`
+- **RTS Smoothing + Exact Marginal Log-Likelihood:** Exploited the forward $(A, b, C)$ and backward $(\eta, J)$ potentials already maintained in `FoldTree<KalmanFilter*, 4>` to implement zero-backward-sweep exact Rauch–Tung–Striebel smoothing (`smooth_1d`, `smooth_2d`, `smooth_nd`, `smooth_at`, `smooth_many`) via `tree.prefix(t)` fused with `tree.suffix(t+1)`, plus exact associative marginal log-likelihood (`log_marginal_likelihood`, `range_log_marginal_likelihood`).
+- **Numerical trap caught on `T = 100k` drifting trajectory:** Uncentered canonical `log_z` (evaluated at $x_0 = 0$) accumulated $O(y^2/S) \sim 10^8$ cancellation per merge, producing `2.86e-9` relative log-likelihood error at `y ~ 5,000` (and catastrophic loss at `1e6` offset).
+- **Root fix (Anchor-Centered Associative Gaussian Potentials):** Attached a coordinate-aligned input anchor $r$ satisfying $(F^\top h)^\top r = y$ so leaf $\tilde{z} = -\frac{1}{2}(\ln 2\pi + \ln S)$, $\tilde{\eta} = 0$, and block combines operate strictly on $\delta = b_1 - r_2 = O(1)$. Relative log-likelihood error at `T = 100k` plunged **2,500,000×** from `2.86e-9 → 1.14e-15` (and stays `1.04e-12` even at `1e6` offset!). Live speedup: **`533,197×`** vs NumPy RTS at `T = 100k` (`12.45 µs` vs `6.64 s`, `max |diff| = 1.16e-14`) and **`3,109×`** vs `-O3` sequential Rust RTS at `T = 500k` (`6.52 µs` vs `20.26 ms`).
+- **Multivariate `CovarianceMonoid` / `CovarianceStream`:** Pébay centered cross-product merge with 106-bit Knuth TwoSum mean vector, inline zero-alloc `dim <= 8` storage, arbitrary range correlation, and Jacobi-equilibrated Cholesky squared Mahalanobis scoring (`mahalanobis_sq`, factored batch `mahalanobis_many`). Live speedup: **`346×`** vs `np.cov` (`15.51 µs`, `max |diff| = 6.66e-16`) and **`234×`** vs `-O3` sequential Rust (`5.69 µs`).
 
-- `cargo test --package backfold-core --package backfold-cli --release`: **11/11** unit + **7/7** Breaker audit tests passed.
+## 3. Verified Quality Gate Status (`v0.2.0`)
+
+- `cargo test --package backfold-core --package backfold-cli --release`: **13/13** unit + **9/9** Breaker audit tests passed.
 - `cargo clippy --workspace --all-targets -- -D warnings`: **0 warnings**.
-- `pytest -v tests/`: **12/12** passed.
-- `ruff check python/ benchmarks/ tests/`: **All checks passed**.
-- Native CLI cold startup: **`3.25 ms` median** (`3.40 ms` p95).
+- `pytest -v tests/`: **14/14** passed.
+- `ruff check python/ benchmarks/ tests/ examples/`: **All checks passed**.
+- Runnable examples (`examples/kalman_rts_smoothing.py`, `examples/multivariate_anomaly_cov.py`, `examples/polars_late_arrivals.py`): **3/3 passed**.
 - Canonical machine-readable receipt: [`benchmarks/results.json`](benchmarks/results.json).

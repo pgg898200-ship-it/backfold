@@ -51,5 +51,10 @@ jobs:
         env:
           PYTHONPATH: .
         run: pytest -v tests/
+      - name: Run runnable examples
+        run: |
+          python examples/kalman_rts_smoothing.py
+          python examples/multivariate_anomaly_cov.py
+          python examples/polars_late_arrivals.py
       - name: Lint with ruff
-        run: ruff check python/ benchmarks/ tests/
+        run: ruff check python/ benchmarks/ tests/ examples/

@@ -7,9 +7,13 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::key::EventKey;
 use crate::monoid::{check_all_finite, check_finite, BackfoldError, Monoid};
+use crate::tree::FoldTree;
 
-/// Exact posterior state `(mean, cov)` at the end of a filtered interval.
+const LN_TAU: f64 = 1.837_877_066_409_345_3; // ln(2 * pi)
+
+/// Exact posterior state `(mean, cov)` at the end of a filtered or smoothed interval.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct KalmanPosterior {
@@ -18,7 +22,10 @@ pub struct KalmanPosterior {
     pub cov: Vec<f64>,
 }
 
-/// Ultra-fast stack-only scalar (1D) associative Kalman filter monoid (zero heap allocations).
+/// Ultra-fast stack-only scalar (1D) associative Kalman filter/smoother monoid (zero heap allocations).
+///
+/// Uses anchor-centered Gaussian potentials around `anchor` so `log_z` has zero `O(y^2 / S)`
+/// catastrophic cancellation even on drifting or high-offset (`1e6+`) trajectories.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct KalmanFilter1D {
@@ -28,6 +35,10 @@ pub struct KalmanFilter1D {
     pub c: f64,
     pub eta: f64,
     pub j: f64,
+    /// Input-state anchor `r` (`x_end = a*(x0 - r) + b`, `log ell(x0) = log_z + eta*(x0 - r) - 0.5*j*(x0 - r)^2`).
+    pub anchor: f64,
+    /// Exact anchor-centered Gaussian potential log-constant enabling O(log T) marginal log-likelihood.
+    pub log_z: f64,
 }
 
 impl KalmanFilter1D {
@@ -47,13 +58,22 @@ impl KalmanFilter1D {
         let inv_s = 1.0 / s;
         let k = q * h * inv_s;
         let ikh = 1.0 - k * h;
+        let g = f * h;
+        let (anchor, b, eta, log_z) = if g.abs() > 1e-150 {
+            let anc = y / g;
+            (anc, f * anc, 0.0, -0.5 * (LN_TAU + s.ln()))
+        } else {
+            (0.0, k * y, 0.0, -0.5 * (LN_TAU + s.ln() + y * y * inv_s))
+        };
         Ok(Self {
             n: 1,
             a: ikh * f,
-            b: k * y,
+            b,
             c: (ikh * ikh * q + k * k * r).max(0.0),
-            eta: f * h * inv_s * y,
-            j: (f * f * h * h * inv_s).max(0.0),
+            eta,
+            j: (g * g * inv_s).max(0.0),
+            anchor,
+            log_z,
         })
     }
 
@@ -70,6 +90,8 @@ impl KalmanFilter1D {
             c: q,
             eta: 0.0,
             j: 0.0,
+            anchor: 0.0,
+            log_z: 0.0,
         })
     }
 
@@ -88,7 +110,7 @@ impl KalmanFilter1D {
         Self::from_observation(1.0, q_rate * dt, 1.0, r_obs, y)
     }
 
-    /// Apply initial Gaussian prior `N(m0, p0)` to obtain exact posterior `(mean, var)`.
+    /// Apply initial Gaussian prior `N(m0, p0)` to obtain exact filtered posterior `(mean, var)`.
     pub fn posterior(&self, m0: f64, p0: f64) -> Result<(f64, f64), BackfoldError> {
         let m0 = check_finite(m0, "m0")?;
         let p0 = check_finite(p0, "p0")?;
@@ -98,10 +120,51 @@ impl KalmanFilter1D {
         if self.n == 0 {
             return Ok((m0, p0));
         }
+        let delta = m0 - self.anchor;
         let d = 1.0 / (1.0 + p0 * self.j);
-        let mean = self.a * d * (m0 + p0 * self.eta) + self.b;
+        let mean = self.a * d * (delta + p0 * self.eta) + self.b;
         let var = (self.a * self.a * d * p0 + self.c).max(0.0);
         Ok((mean, var))
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, p0)`.
+    pub fn log_marginal_likelihood(&self, m0: f64, p0: f64) -> Result<f64, BackfoldError> {
+        let m0 = check_finite(m0, "m0")?;
+        let p0 = check_finite(p0, "p0")?;
+        if p0 < 0.0 {
+            return Err(BackfoldError::InvalidParameter("p0 must be >= 0"));
+        }
+        if self.n == 0 {
+            return Ok(0.0);
+        }
+        let prior = Self {
+            n: 1,
+            a: 0.0,
+            b: m0,
+            c: p0,
+            eta: 0.0,
+            j: 0.0,
+            anchor: 0.0,
+            log_z: 0.0,
+        };
+        Ok(Self::combine(&prior, self, &()).log_z)
+    }
+
+    /// Exact Rauch-Tung-Striebel (RTS) Bayesian smoothing fusion combining filtered posterior
+    /// `p(x_t | y_{1:t}) = N(m_filt, p_filt)` with the future suffix monoid `future` (`y_{t+1:T}`).
+    pub fn smooth_fusion(m_filt: f64, p_filt: f64, future: &Self) -> Result<(f64, f64), BackfoldError> {
+        let m_filt = check_finite(m_filt, "m_filt")?;
+        let p_filt = check_finite(p_filt, "p_filt")?;
+        if p_filt < 0.0 {
+            return Err(BackfoldError::InvalidParameter("p_filt must be >= 0"));
+        }
+        if future.n == 0 {
+            return Ok((m_filt, p_filt));
+        }
+        let d = 1.0 / (1.0 + p_filt * future.j);
+        let m_smooth = m_filt + d * p_filt * (future.eta + future.j * (future.anchor - m_filt));
+        let p_smooth = (d * p_filt).max(0.0);
+        Ok((m_smooth, p_smooth))
     }
 }
 
@@ -117,6 +180,8 @@ impl Monoid for KalmanFilter1D {
             c: 0.0,
             eta: 0.0,
             j: 0.0,
+            anchor: 0.0,
+            log_z: 0.0,
         }
     }
 
@@ -133,20 +198,26 @@ impl Monoid for KalmanFilter1D {
         if e2.n == 0 {
             return *e1;
         }
-        let d = 1.0 / (1.0 + e1.c * e2.j);
+        let delta = e1.b - e2.anchor;
+        let m = 1.0 + e1.c * e2.j;
+        let d = 1.0 / m;
+        let quad = delta * d * (2.0 * e2.eta - e2.j * delta) + e2.eta * d * e1.c * e2.eta;
+        let log_z = e1.log_z + e2.log_z - 0.5 * m.ln() + 0.5 * quad;
         Self {
             n: e1.n + e2.n,
             a: flush_subnormal(e2.a * d * e1.a),
-            b: flush_subnormal(e2.a * d * (e1.b + e1.c * e2.eta) + e2.b),
+            b: flush_subnormal(e2.a * d * (delta + e1.c * e2.eta) + e2.b),
             c: flush_subnormal((e2.a * e2.a * d * e1.c + e2.c).max(0.0)),
-            eta: flush_subnormal(e1.a * d * (e2.eta - e2.j * e1.b) + e1.eta),
+            eta: flush_subnormal(e1.a * d * (e2.eta - e2.j * delta) + e1.eta),
             j: flush_subnormal((e1.a * e1.a * d * e2.j + e1.j).max(0.0)),
+            anchor: e1.anchor,
+            log_z,
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Ultra-fast stack-only 2D associative Kalman filter monoid (zero heap allocations)
+// Ultra-fast stack-only 2D associative Kalman filter/smoother monoid (zero heap allocations)
 // ---------------------------------------------------------------------------
 
 #[inline]
@@ -187,14 +258,18 @@ fn mv2(a: &[f64; 4], x: &[f64; 2]) -> [f64; 2] {
 }
 
 #[inline]
+fn dot2(a: &[f64; 2], b: &[f64; 2]) -> f64 {
+    a[0] * b[0] + a[1] * b[1]
+}
+
+#[inline]
 fn sym2(m: [f64; 4]) -> [f64; 4] {
     let off = 0.5 * (m[1] + m[2]);
     [m[0], off, off, m[3]]
 }
 
-/// Zero-heap-allocation 2D Särkkä-García-Fernández associative Kalman filter monoid.
-/// Ideal for constant-velocity, local-linear-trend, and 2-state sensor fusion at >1000x
-/// speedup over sequential O(T) filtering on late arrivals and retractions.
+/// Zero-heap-allocation 2D Särkkä-García-Fernández associative Kalman filter & RTS smoother monoid
+/// with anchor-centered Gaussian potentials for cancellation-free exact marginal log-likelihood.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct KalmanFilter2D {
@@ -204,6 +279,10 @@ pub struct KalmanFilter2D {
     pub c: [f64; 4],
     pub eta: [f64; 2],
     pub j: [f64; 4],
+    /// Input-state anchor `r` eliminating `O(y^2 / S)` cancellation in `log_z` and `smooth_fusion`.
+    pub anchor: [f64; 2],
+    /// Exact anchor-centered Gaussian potential log-constant enabling O(log T) marginal log-likelihood.
+    pub log_z: f64,
 }
 
 impl KalmanFilter2D {
@@ -236,7 +315,6 @@ impl KalmanFilter2D {
             1.0 - k[1] * h[1],
         ];
         let a = mul2(&ikh, &f);
-        let b = [k[0] * y, k[1] * y];
         let tmp = mul2(&ikh, &q);
         let c_raw = mul2_tr(&tmp, &ikh);
         let c = sym2([
@@ -246,13 +324,30 @@ impl KalmanFilter2D {
             c_raw[3] + k[1] * k[1] * r,
         ]);
         let fh = [f[0] * h[0] + f[2] * h[1], f[1] * h[0] + f[3] * h[1]];
-        let eta = [fh[0] * inv_s * y, fh[1] * inv_s * y];
         let j = sym2([
             fh[0] * fh[0] * inv_s,
             fh[0] * fh[1] * inv_s,
             fh[1] * fh[0] * inv_s,
             fh[1] * fh[1] * inv_s,
         ]);
+        // Pick coordinate-aligned anchor satisfying fh^T anchor == y so log_z = -0.5*(ln 2pi + ln S),
+        // eta = 0, and b = F * anchor (eliminating O(y^2/S) cancellation across 100k+ ticks!).
+        let fh_max = fh[0].abs().max(fh[1].abs());
+        let (anchor, b, eta, log_z) = if fh_max > 1e-150 {
+            let anc = if fh[0].abs() > 1e-6 * fh_max {
+                [y / fh[0], 0.0]
+            } else {
+                [0.0, y / fh[1]]
+            };
+            (anc, mv2(&f, &anc), [0.0, 0.0], -0.5 * (LN_TAU + s.ln()))
+        } else {
+            (
+                [0.0, 0.0],
+                [k[0] * y, k[1] * y],
+                [0.0, 0.0],
+                -0.5 * (LN_TAU + s.ln() + y * y * inv_s),
+            )
+        };
         Ok(Self {
             n: 1,
             a,
@@ -260,6 +355,8 @@ impl KalmanFilter2D {
             c,
             eta,
             j,
+            anchor,
+            log_z,
         })
     }
 
@@ -273,6 +370,8 @@ impl KalmanFilter2D {
             c: sym2(q),
             eta: [0.0; 2],
             j: [0.0; 4],
+            anchor: [0.0; 2],
+            log_z: 0.0,
         })
     }
 
@@ -340,9 +439,61 @@ impl KalmanFilter2D {
             c: p0,
             eta: [0.0; 2],
             j: [0.0; 4],
+            anchor: [0.0; 2],
+            log_z: 0.0,
         };
         let combined = Self::combine(&prior, self, &());
         Ok((combined.b, combined.c))
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, P0)`.
+    pub fn log_marginal_likelihood(&self, m0: [f64; 2], p0: [f64; 4]) -> Result<f64, BackfoldError> {
+        check_all_finite(&m0, "m0")?;
+        check_all_finite(&p0, "p0")?;
+        if self.n == 0 {
+            return Ok(0.0);
+        }
+        let prior = Self {
+            n: 1,
+            a: [0.0; 4],
+            b: m0,
+            c: p0,
+            eta: [0.0; 2],
+            j: [0.0; 4],
+            anchor: [0.0; 2],
+            log_z: 0.0,
+        };
+        Ok(Self::combine(&prior, self, &()).log_z)
+    }
+
+    /// Exact Rauch-Tung-Striebel (RTS) Bayesian smoothing fusion combining filtered posterior
+    /// `p(x_t | y_{1:t}) = N(m_filt, p_filt)` with the future suffix monoid `future` (`y_{t+1:T}`).
+    pub fn smooth_fusion(
+        m_filt: [f64; 2],
+        p_filt: [f64; 4],
+        future: &Self,
+    ) -> Result<([f64; 2], [f64; 4]), BackfoldError> {
+        check_all_finite(&m_filt, "m_filt")?;
+        check_all_finite(&p_filt, "p_filt")?;
+        if future.n == 0 {
+            return Ok((m_filt, p_filt));
+        }
+        let pj = mul2(&p_filt, &future.j);
+        let m0 = 1.0 + pj[0];
+        let m1 = pj[1];
+        let m2 = pj[2];
+        let m3 = 1.0 + pj[3];
+        let inv_det = 1.0 / (m0 * m3 - m1 * m2);
+        let d = [m3 * inv_det, -m1 * inv_det, -m2 * inv_det, m0 * inv_det];
+
+        // Centered correction: m_smooth = m_filt + D * P_filt * (eta + J * (anchor - m_filt))
+        let diff = [future.anchor[0] - m_filt[0], future.anchor[1] - m_filt[1]];
+        let j_diff = mv2(&future.j, &diff);
+        let p_rhs = mv2(&p_filt, &[future.eta[0] + j_diff[0], future.eta[1] + j_diff[1]]);
+        let corr = mv2(&d, &p_rhs);
+        let m_smooth = [m_filt[0] + corr[0], m_filt[1] + corr[1]];
+        let p_smooth = sym2(mul2(&d, &p_filt));
+        Ok((m_smooth, p_smooth))
     }
 }
 
@@ -378,6 +529,8 @@ impl Monoid for KalmanFilter2D {
             c: [0.0; 4],
             eta: [0.0; 2],
             j: [0.0; 4],
+            anchor: [0.0; 2],
+            log_z: 0.0,
         }
     }
 
@@ -394,12 +547,14 @@ impl Monoid for KalmanFilter2D {
         if e2.n == 0 {
             return *e1;
         }
+        let delta = [e1.b[0] - e2.anchor[0], e1.b[1] - e2.anchor[1]];
         let cj = mul2(&e1.c, &e2.j);
         let m0 = 1.0 + cj[0];
         let m1 = cj[1];
         let m2 = cj[2];
         let m3 = 1.0 + cj[3];
-        let inv_det = 1.0 / (m0 * m3 - m1 * m2);
+        let det = m0 * m3 - m1 * m2;
+        let inv_det = 1.0 / det;
         let d = [m3 * inv_det, -m1 * inv_det, -m2 * inv_det, m0 * inv_det];
         let dt = [d[0], d[2], d[1], d[3]];
 
@@ -407,7 +562,7 @@ impl Monoid for KalmanFilter2D {
         let a12 = flush4(mul2(&a2_d, &e1.a));
 
         let c1_eta2 = mv2(&e1.c, &e2.eta);
-        let rhs_b = [e1.b[0] + c1_eta2[0], e1.b[1] + c1_eta2[1]];
+        let rhs_b = [delta[0] + c1_eta2[0], delta[1] + c1_eta2[1]];
         let ab = mv2(&a2_d, &rhs_b);
         let b12 = flush2([ab[0] + e2.b[0], ab[1] + e2.b[1]]);
 
@@ -421,8 +576,8 @@ impl Monoid for KalmanFilter2D {
         ]));
 
         let a1t_dt = mul2_tl(&e1.a, &dt);
-        let j2_b1 = mv2(&e2.j, &e1.b);
-        let rhs_e = [e2.eta[0] - j2_b1[0], e2.eta[1] - j2_b1[1]];
+        let j2_delta = mv2(&e2.j, &delta);
+        let rhs_e = [e2.eta[0] - j2_delta[0], e2.eta[1] - j2_delta[1]];
         let ae = mv2(&a1t_dt, &rhs_e);
         let eta12 = flush2([ae[0] + e1.eta[0], ae[1] + e1.eta[1]]);
 
@@ -435,6 +590,12 @@ impl Monoid for KalmanFilter2D {
             j_tmp[3] + e1.j[3],
         ]));
 
+        // Exact anchor-centered associative marginal log-likelihood update (delta = O(1)!)
+        let dt_v = mv2(&dt, &[e2.eta[0] + rhs_e[0], e2.eta[1] + rhs_e[1]]);
+        let d_c1_eta2 = mv2(&d, &c1_eta2);
+        let quad = dot2(&delta, &dt_v) + dot2(&e2.eta, &d_c1_eta2);
+        let log_z = e1.log_z + e2.log_z - 0.5 * det.abs().ln() + 0.5 * quad;
+
         Self {
             n: e1.n + e2.n,
             a: a12,
@@ -442,6 +603,8 @@ impl Monoid for KalmanFilter2D {
             c: c12,
             eta: eta12,
             j: j12,
+            anchor: e1.anchor,
+            log_z,
         }
     }
 }
@@ -541,15 +704,15 @@ fn symmetrize(n: usize, m: &mut [f64]) {
     }
 }
 
-/// Invert general nonsingular `n x n` matrix via fast closed-form for `n <= 2` or
-/// Gauss-Jordan with partial pivoting for `n >= 3`.
-fn invert_square(n: usize, mat: &[f64]) -> Result<Vec<f64>, BackfoldError> {
+/// Invert general nonsingular `n x n` matrix and return `(A^{-1}, ln|det(A)|)` via fast
+/// closed-form for `n <= 2` or Gauss-Jordan with partial pivoting for `n >= 3`.
+fn invert_square_with_logdet(n: usize, mat: &[f64]) -> Result<(Vec<f64>, f64), BackfoldError> {
     if n == 1 {
         let v = mat[0];
         if v.abs() <= 1e-300 || !v.is_finite() {
             return Err(BackfoldError::SingularMatrix("1x1 singular matrix"));
         }
-        return Ok(vec![1.0 / v]);
+        return Ok((vec![1.0 / v], v.abs().ln()));
     }
     if n == 2 {
         let det = mat[0] * mat[3] - mat[1] * mat[2];
@@ -557,7 +720,10 @@ fn invert_square(n: usize, mat: &[f64]) -> Result<Vec<f64>, BackfoldError> {
             return Err(BackfoldError::SingularMatrix("2x2 singular matrix"));
         }
         let inv = 1.0 / det;
-        return Ok(vec![mat[3] * inv, -mat[1] * inv, -mat[2] * inv, mat[0] * inv]);
+        return Ok((
+            vec![mat[3] * inv, -mat[1] * inv, -mat[2] * inv, mat[0] * inv],
+            det.abs().ln(),
+        ));
     }
 
     let mut a = mat.to_vec();
@@ -565,6 +731,7 @@ fn invert_square(n: usize, mat: &[f64]) -> Result<Vec<f64>, BackfoldError> {
     for i in 0..n {
         inv[i * n + i] = 1.0;
     }
+    let mut log_det = 0.0;
 
     for col in 0..n {
         let mut piv_row = col;
@@ -579,6 +746,7 @@ fn invert_square(n: usize, mat: &[f64]) -> Result<Vec<f64>, BackfoldError> {
         if piv_abs <= 1e-300 || !piv_abs.is_finite() {
             return Err(BackfoldError::SingularMatrix("matrix singular in LU invert"));
         }
+        log_det += piv_abs.ln();
         if piv_row != col {
             for j in 0..n {
                 a.swap(col * n + j, piv_row * n + j);
@@ -604,13 +772,13 @@ fn invert_square(n: usize, mat: &[f64]) -> Result<Vec<f64>, BackfoldError> {
             }
         }
     }
-    Ok(inv)
+    Ok((inv, log_det))
 }
 
-/// Multivariate associative Kalman filter monoid (`Ctx = usize` state dimension `d`).
+/// Multivariate associative Kalman filter & RTS smoother monoid (`Ctx = usize` state dimension `d`).
 ///
-/// Implements the exact 5-tuple `(A, b, C, eta, J)` composition of Särkkä & García-Fernández
-/// (IEEE TAC 2020) with Joseph-form PSD leaf updates and explicit covariance symmetrization.
+/// Implements the exact 5-tuple `(A, b, C, eta, J)` + anchor-centered marginal potential `(anchor, log_z)`
+/// of Särkkä & García-Fernández (IEEE TAC 2020) with Joseph-form PSD leaves and zero `O(y^2/S)` cancellation.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct KalmanMonoid {
@@ -621,6 +789,8 @@ pub struct KalmanMonoid {
     pub c: Vec<f64>,
     pub eta: Vec<f64>,
     pub j: Vec<f64>,
+    pub anchor: Vec<f64>,
+    pub log_z: f64,
 }
 
 impl KalmanMonoid {
@@ -677,7 +847,6 @@ impl KalmanMonoid {
         }
 
         let a = mat_mul(dim, &ikh, f);
-        let b: Vec<f64> = k.iter().map(|&ki| ki * y).collect();
 
         // Joseph form C = (I - K h^T) Q (I - K h^T)^T + K r K^T
         let tmp = mat_mul(dim, &ikh, q);
@@ -691,7 +860,6 @@ impl KalmanMonoid {
 
         // fh = F^T h
         let fh = mat_t_vec(dim, f, h);
-        let eta: Vec<f64> = fh.iter().map(|&v| v * inv_s * y).collect();
         let mut j_mat = vec![0.0; dim * dim];
         for i in 0..dim {
             for j in 0..dim {
@@ -700,6 +868,26 @@ impl KalmanMonoid {
         }
         symmetrize(dim, &mut j_mat);
 
+        // Coordinate-aligned anchor satisfying fh^T anchor == y
+        let fh_max = fh.iter().map(|v| v.abs()).fold(0.0f64, f64::max);
+        let (anchor, b, eta, log_z) = if fh_max > 1e-150 {
+            let idx = fh
+                .iter()
+                .position(|v| v.abs() > 1e-6 * fh_max)
+                .unwrap_or(0);
+            let mut anc = vec![0.0; dim];
+            anc[idx] = y / fh[idx];
+            let b_c = mat_vec(dim, f, &anc);
+            (anc, b_c, vec![0.0; dim], -0.5 * (LN_TAU + s.ln()))
+        } else {
+            let b_c: Vec<f64> = k.iter().map(|&ki| ki * y).collect();
+            (
+                vec![0.0; dim],
+                b_c,
+                vec![0.0; dim],
+                -0.5 * (LN_TAU + s.ln() + y * y * inv_s),
+            )
+        };
         Ok(Self {
             dim,
             n: 1,
@@ -708,6 +896,8 @@ impl KalmanMonoid {
             c,
             eta,
             j: j_mat,
+            anchor,
+            log_z,
         })
     }
 
@@ -763,7 +953,7 @@ impl KalmanMonoid {
                 s[i * obs_dim + j] += sum;
             }
         }
-        let s_inv = invert_square(obs_dim, &s)?;
+        let (s_inv, log_det_s) = invert_square_with_logdet(obs_dim, &s)?;
 
         // K = Q H^T S^{-1} (dim x obs_dim)
         let mut k = vec![0.0; dim * obs_dim];
@@ -865,6 +1055,11 @@ impl KalmanMonoid {
         }
         symmetrize(dim, &mut j_mat);
 
+        let mut y_sinv_y = 0.0;
+        for p in 0..obs_dim {
+            y_sinv_y += y[p] * s_inv_y[p];
+        }
+        let log_z = -0.5 * ((obs_dim as f64) * LN_TAU + log_det_s + y_sinv_y);
         Ok(Self {
             dim,
             n: 1,
@@ -873,6 +1068,8 @@ impl KalmanMonoid {
             c,
             eta,
             j: j_mat,
+            anchor: vec![0.0; dim],
+            log_z,
         })
     }
 
@@ -899,6 +1096,8 @@ impl KalmanMonoid {
             c,
             eta: vec![0.0; dim],
             j: vec![0.0; dim * dim],
+            anchor: vec![0.0; dim],
+            log_z: 0.0,
         })
     }
 
@@ -971,6 +1170,8 @@ impl KalmanMonoid {
             c: p0.to_vec(),
             eta: vec![0.0; d],
             j: vec![0.0; d * d],
+            anchor: vec![0.0; d],
+            log_z: 0.0,
         };
         let combined = Self::combine(&prior, self, &d);
         Ok(KalmanPosterior {
@@ -978,6 +1179,82 @@ impl KalmanMonoid {
             mean: combined.b,
             cov: combined.c,
         })
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, P0)`.
+    pub fn log_marginal_likelihood(&self, m0: &[f64], p0: &[f64]) -> Result<f64, BackfoldError> {
+        let d = self.dim;
+        if m0.len() != d || p0.len() != d * d {
+            return Err(BackfoldError::DimensionMismatch {
+                expected: d,
+                got: m0.len(),
+            });
+        }
+        check_all_finite(m0, "m0")?;
+        check_all_finite(p0, "p0")?;
+        if self.n == 0 {
+            return Ok(0.0);
+        }
+        let prior = Self {
+            dim: d,
+            n: 1,
+            a: vec![0.0; d * d],
+            b: m0.to_vec(),
+            c: p0.to_vec(),
+            eta: vec![0.0; d],
+            j: vec![0.0; d * d],
+            anchor: vec![0.0; d],
+            log_z: 0.0,
+        };
+        Ok(Self::combine(&prior, self, &d).log_z)
+    }
+
+    /// Exact Rauch-Tung-Striebel (RTS) Bayesian smoothing fusion combining filtered posterior
+    /// `p(x_t | y_{1:t}) = N(m_filt, p_filt)` with the future suffix monoid `future` (`y_{t+1:T}`).
+    pub fn smooth_fusion(
+        m_filt: &[f64],
+        p_filt: &[f64],
+        future: &Self,
+    ) -> Result<KalmanPosterior, BackfoldError> {
+        let d = future.dim;
+        if m_filt.len() != d || p_filt.len() != d * d {
+            return Err(BackfoldError::DimensionMismatch {
+                expected: d,
+                got: m_filt.len(),
+            });
+        }
+        check_all_finite(m_filt, "m_filt")?;
+        check_all_finite(p_filt, "p_filt")?;
+        if future.n == 0 {
+            return Ok(KalmanPosterior {
+                dim: d,
+                mean: m_filt.to_vec(),
+                cov: p_filt.to_vec(),
+            });
+        }
+        let mut m = mat_mul(d, p_filt, &future.j);
+        for i in 0..d {
+            m[i * d + i] += 1.0;
+        }
+        let (inv_m, _) = invert_square_with_logdet(d, &m)?;
+        let mut diff = vec![0.0; d];
+        for i in 0..d {
+            diff[i] = future.anchor[i] - m_filt[i];
+        }
+        let j_diff = mat_vec(d, &future.j, &diff);
+        let mut rhs_inner = vec![0.0; d];
+        for i in 0..d {
+            rhs_inner[i] = future.eta[i] + j_diff[i];
+        }
+        let p_rhs = mat_vec(d, p_filt, &rhs_inner);
+        let corr = mat_vec(d, &inv_m, &p_rhs);
+        let mut mean = vec![0.0; d];
+        for i in 0..d {
+            mean[i] = m_filt[i] + corr[i];
+        }
+        let mut cov = mat_mul(d, &inv_m, p_filt);
+        symmetrize(d, &mut cov);
+        Ok(KalmanPosterior { dim: d, mean, cov })
     }
 }
 
@@ -998,6 +1275,8 @@ impl Monoid for KalmanMonoid {
             c: vec![0.0; d * d],
             eta: vec![0.0; d],
             j: vec![0.0; d * d],
+            anchor: vec![0.0; d],
+            log_z: 0.0,
         }
     }
 
@@ -1017,12 +1296,18 @@ impl Monoid for KalmanMonoid {
         debug_assert_eq!(e1.dim, d);
         debug_assert_eq!(e2.dim, d);
 
+        let mut delta = vec![0.0; d];
+        for i in 0..d {
+            delta[i] = e1.b[i] - e2.anchor[i];
+        }
+
         // M = I + C1 * J2 (all eigenvalues >= 1 since C1 >= 0, J2 >= 0)
         let mut m = mat_mul(d, &e1.c, &e2.j);
         for i in 0..d {
             m[i * d + i] += 1.0;
         }
-        let inv_m = invert_square(d, &m).expect("I + C1*J2 is strictly nonsingular for PSD C1, J2");
+        let (inv_m, log_det_m) = invert_square_with_logdet(d, &m)
+            .expect("I + C1*J2 is strictly nonsingular for PSD C1, J2");
 
         // D^T = (I + J2 * C1)^{-1} = inv_m^T
         let mut inv_mt = vec![0.0; d * d];
@@ -1034,48 +1319,64 @@ impl Monoid for KalmanMonoid {
 
         // a2_d = A2 * D
         let a2_d = mat_mul(d, &e2.a, &inv_m);
-        let a12 = mat_mul(d, &a2_d, &e1.a);
+        let mut a12 = mat_mul(d, &a2_d, &e1.a);
 
-        // b12 = A2 * D * (b1 + C1 * eta2) + b2
+        // b12 = A2 * D * (delta + C1 * eta2) + b2
         let c1_eta2 = mat_vec(d, &e1.c, &e2.eta);
         let mut rhs_b = vec![0.0; d];
         for i in 0..d {
-            rhs_b[i] = e1.b[i] + c1_eta2[i];
+            rhs_b[i] = delta[i] + c1_eta2[i];
         }
         let mut b12 = mat_vec(d, &a2_d, &rhs_b);
         for i in 0..d {
-            b12[i] += e2.b[i];
+            b12[i] = flush_subnormal(b12[i] + e2.b[i]);
         }
 
         // C12 = sym(A2 * D * C1 * A2^T + C2)
         let a2_d_c1 = mat_mul(d, &a2_d, &e1.c);
         let mut c12 = mat_mul_t_right(d, &a2_d_c1, &e2.a);
         for i in 0..(d * d) {
-            c12[i] += e2.c[i];
+            c12[i] = flush_subnormal(c12[i] + e2.c[i]);
         }
         symmetrize(d, &mut c12);
 
         // a1t_dt = A1^T * D^T
         let a1t_dt = mat_mul_t_left(d, &e1.a, &inv_mt);
 
-        // eta12 = A1^T * D^T * (eta2 - J2 * b1) + eta1
-        let j2_b1 = mat_vec(d, &e2.j, &e1.b);
+        // eta12 = A1^T * D^T * (eta2 - J2 * delta) + eta1
+        let j2_delta = mat_vec(d, &e2.j, &delta);
         let mut rhs_e = vec![0.0; d];
         for i in 0..d {
-            rhs_e[i] = e2.eta[i] - j2_b1[i];
+            rhs_e[i] = e2.eta[i] - j2_delta[i];
         }
         let mut eta12 = mat_vec(d, &a1t_dt, &rhs_e);
         for i in 0..d {
-            eta12[i] += e1.eta[i];
+            eta12[i] = flush_subnormal(eta12[i] + e1.eta[i]);
         }
 
         // J12 = sym(A1^T * D^T * J2 * A1 + J1)
         let a1t_dt_j2 = mat_mul(d, &a1t_dt, &e2.j);
         let mut j12 = mat_mul(d, &a1t_dt_j2, &e1.a);
         for i in 0..(d * d) {
-            j12[i] += e1.j[i];
+            j12[i] = flush_subnormal(j12[i] + e1.j[i]);
         }
         symmetrize(d, &mut j12);
+        for v in &mut a12 {
+            *v = flush_subnormal(*v);
+        }
+
+        // Exact anchor-centered associative marginal log-likelihood update
+        let mut sum_eta_rhs = vec![0.0; d];
+        for i in 0..d {
+            sum_eta_rhs[i] = e2.eta[i] + rhs_e[i];
+        }
+        let dt_v = mat_vec(d, &inv_mt, &sum_eta_rhs);
+        let d_c1_eta2 = mat_vec(d, &inv_m, &c1_eta2);
+        let mut quad = 0.0;
+        for i in 0..d {
+            quad += delta[i] * dt_v[i] + e2.eta[i] * d_c1_eta2[i];
+        }
+        let log_z = e1.log_z + e2.log_z - 0.5 * log_det_m + 0.5 * quad;
 
         Self {
             dim: d,
@@ -1085,8 +1386,61 @@ impl Monoid for KalmanMonoid {
             c: c12,
             eta: eta12,
             j: j12,
+            anchor: e1.anchor.clone(),
+            log_z,
         }
     }
+}
+
+/// Exact O(log T) Rauch-Tung-Striebel (RTS) smoothed posterior `p(x_t | y_{1:T})` at any
+/// timestamp `t` in a persistent `FoldTree<KalmanFilter1D, B>`.
+pub fn smooth_1d<const B: usize>(
+    tree: &FoldTree<KalmanFilter1D, B>,
+    t: i64,
+    m0: f64,
+    p0: f64,
+) -> Result<(f64, f64), BackfoldError> {
+    let left = tree.prefix(EventKey::time_end(t));
+    let (m_f, p_f) = left.posterior(m0, p0)?;
+    if t == i64::MAX {
+        return Ok((m_f, p_f));
+    }
+    let right = tree.suffix(EventKey::time_start(t + 1));
+    KalmanFilter1D::smooth_fusion(m_f, p_f, &right)
+}
+
+/// Exact O(log T) Rauch-Tung-Striebel (RTS) smoothed posterior `p(x_t | y_{1:T})` at any
+/// timestamp `t` in a persistent `FoldTree<KalmanFilter2D, B>`.
+pub fn smooth_2d<const B: usize>(
+    tree: &FoldTree<KalmanFilter2D, B>,
+    t: i64,
+    m0: [f64; 2],
+    p0: [f64; 4],
+) -> Result<([f64; 2], [f64; 4]), BackfoldError> {
+    let left = tree.prefix(EventKey::time_end(t));
+    let (m_f, p_f) = left.posterior(m0, p0)?;
+    if t == i64::MAX {
+        return Ok((m_f, p_f));
+    }
+    let right = tree.suffix(EventKey::time_start(t + 1));
+    KalmanFilter2D::smooth_fusion(m_f, p_f, &right)
+}
+
+/// Exact O(log T) Rauch-Tung-Striebel (RTS) smoothed posterior `p(x_t | y_{1:T})` at any
+/// timestamp `t` in a persistent general-dimension `FoldTree<KalmanMonoid, B>`.
+pub fn smooth_nd<const B: usize>(
+    tree: &FoldTree<KalmanMonoid, B>,
+    t: i64,
+    m0: &[f64],
+    p0: &[f64],
+) -> Result<KalmanPosterior, BackfoldError> {
+    let left = tree.prefix(EventKey::time_end(t));
+    let filt = left.posterior(m0, p0)?;
+    if t == i64::MAX {
+        return Ok(filt);
+    }
+    let right = tree.suffix(EventKey::time_start(t + 1));
+    KalmanMonoid::smooth_fusion(&filt.mean, &filt.cov, &right)
 }
 
 #[cfg(test)]
@@ -1163,6 +1517,159 @@ mod tests {
         }
         for i in 0..4 {
             assert!((post.cov[i] - p[i]).abs() < 1e-11, "cov[{i}] mismatch");
+        }
+    }
+
+    #[test]
+    fn rts_smoother_and_marginal_log_likelihood_exact_parity() {
+        // Irregular dt + missing observations + full textbook RTS forward-backward reference
+        let dts = [1.0f64, 0.5, 2.0, 0.25, 1.5, 1.0, 0.75, 1.25, 0.5, 1.0];
+        let ys = [
+            Some(1.1),
+            Some(1.8),
+            None,
+            Some(4.2),
+            Some(5.9),
+            None,
+            Some(7.7),
+            Some(9.1),
+            Some(9.5),
+            Some(10.6),
+        ];
+        let q_acc = 0.08;
+        let r_obs = 0.35;
+        let m0 = [0.4, 0.3];
+        let p0 = [6.0, 0.15, 0.15, 2.5];
+
+        let mut tree2: FoldTree<KalmanFilter2D, 4> = FoldTree::new(());
+        let mut treen: FoldTree<KalmanMonoid, 4> = FoldTree::new(2);
+
+        // Forward filter storing (m_filt, p_filt, m_pred, p_pred, F) for textbook RTS backward pass
+        let n = dts.len();
+        let mut m_filt = vec![[0.0; 2]; n + 1];
+        let mut p_filt = vec![[0.0; 4]; n + 1];
+        let mut m_pred = vec![[0.0; 2]; n];
+        let mut p_pred = vec![[0.0; 4]; n];
+        let mut fs = vec![[0.0; 4]; n];
+        m_filt[0] = m0;
+        p_filt[0] = p0;
+        let mut seq_ll = 0.0;
+
+        for t in 0..n {
+            let dt = dts[t];
+            let f = [1.0, dt, 0.0, 1.0];
+            let q = [
+                q_acc * dt.powi(3) / 3.0,
+                q_acc * dt.powi(2) / 2.0,
+                q_acc * dt.powi(2) / 2.0,
+                q_acc * dt,
+            ];
+            fs[t] = f;
+            let mp = mv2(&f, &m_filt[t]);
+            let fp = mul2(&f, &p_filt[t]);
+            let fpf = mul2_tr(&fp, &f);
+            let pp = sym2([fpf[0] + q[0], fpf[1] + q[1], fpf[2] + q[2], fpf[3] + q[3]]);
+            m_pred[t] = mp;
+            p_pred[t] = pp;
+
+            let ts = (t + 1) as i64;
+            if let Some(y) = ys[t] {
+                tree2.upsert(
+                    EventKey::at(ts),
+                    KalmanFilter2D::from_constant_velocity(dt, q_acc, r_obs, y).unwrap(),
+                );
+                treen.upsert(
+                    EventKey::at(ts),
+                    KalmanMonoid::from_constant_velocity(dt, q_acc, r_obs, y).unwrap(),
+                );
+                let s = pp[0] + r_obs;
+                let innov = y - mp[0];
+                seq_ll += -0.5 * (LN_TAU + s.ln() + innov * innov / s);
+                let k = [pp[0] / s, pp[2] / s];
+                m_filt[t + 1] = [mp[0] + k[0] * innov, mp[1] + k[1] * innov];
+                let ikh = [1.0 - k[0], 0.0, -k[1], 1.0];
+                let tmp = mul2(&ikh, &pp);
+                let jcov = mul2_tr(&tmp, &ikh);
+                p_filt[t + 1] = sym2([
+                    jcov[0] + k[0] * k[0] * r_obs,
+                    jcov[1] + k[0] * k[1] * r_obs,
+                    jcov[2] + k[1] * k[0] * r_obs,
+                    jcov[3] + k[1] * k[1] * r_obs,
+                ]);
+            } else {
+                tree2.upsert(EventKey::at(ts), KalmanFilter2D::from_missing(f, q).unwrap());
+                treen.upsert(
+                    EventKey::at(ts),
+                    KalmanMonoid::from_missing(2, &f, &q).unwrap(),
+                );
+                m_filt[t + 1] = mp;
+                p_filt[t + 1] = pp;
+            }
+        }
+
+        // Exact marginal log-likelihood parity (both 2D fast path and general KalmanMonoid!)
+        let ll2 = tree2.summary().log_marginal_likelihood(m0, p0).unwrap();
+        let lln = treen.summary().log_marginal_likelihood(&m0, &p0).unwrap();
+        assert!((ll2 - seq_ll).abs() < 1e-11, "2D ll={ll2} vs seq={seq_ll}");
+        assert!((lln - seq_ll).abs() < 1e-11, "ND ll={lln} vs seq={seq_ll}");
+
+        // Textbook Rauch-Tung-Striebel backward pass for ALL states t = 0..=n
+        let mut m_rts = m_filt.clone();
+        let mut p_rts = p_filt.clone();
+        for t in (0..n).rev() {
+            let pp = p_pred[t];
+            let det = pp[0] * pp[3] - pp[1] * pp[2];
+            let inv_pp = [pp[3] / det, -pp[1] / det, -pp[2] / det, pp[0] / det];
+            // G_t = P_{t|t} F_t^T P_{t+1|t}^{-1}
+            let pf_t = mul2_tr(&p_filt[t], &fs[t]);
+            let g = mul2(&pf_t, &inv_pp);
+            let dm = [m_rts[t + 1][0] - m_pred[t][0], m_rts[t + 1][1] - m_pred[t][1]];
+            let g_dm = mv2(&g, &dm);
+            m_rts[t] = [m_filt[t][0] + g_dm[0], m_filt[t][1] + g_dm[1]];
+            let dp = [
+                p_rts[t + 1][0] - pp[0],
+                p_rts[t + 1][1] - pp[1],
+                p_rts[t + 1][2] - pp[2],
+                p_rts[t + 1][3] - pp[3],
+            ];
+            let g_dp = mul2(&g, &dp);
+            let g_dp_gt = mul2_tr(&g_dp, &g);
+            p_rts[t] = sym2([
+                p_filt[t][0] + g_dp_gt[0],
+                p_filt[t][1] + g_dp_gt[1],
+                p_filt[t][2] + g_dp_gt[2],
+                p_filt[t][3] + g_dp_gt[3],
+            ]);
+        }
+
+        // Verify smooth_2d and smooth_nd match textbook RTS at EVERY timestamp 0..=n!
+        for t in 0..=n {
+            let (ms2, ps2) = smooth_2d(&tree2, t as i64, m0, p0).unwrap();
+            let postn = smooth_nd(&treen, t as i64, &m0, &p0).unwrap();
+            for i in 0..2 {
+                assert!(
+                    (ms2[i] - m_rts[t][i]).abs() < 1e-11,
+                    "smooth_2d mean mismatch at t={t}[{i}]: {} vs {}",
+                    ms2[i],
+                    m_rts[t][i]
+                );
+                assert!(
+                    (postn.mean[i] - m_rts[t][i]).abs() < 1e-11,
+                    "smooth_nd mean mismatch at t={t}[{i}]"
+                );
+            }
+            for i in 0..4 {
+                assert!(
+                    (ps2[i] - p_rts[t][i]).abs() < 1e-11,
+                    "smooth_2d cov mismatch at t={t}[{i}]: {} vs {}",
+                    ps2[i],
+                    p_rts[t][i]
+                );
+                assert!(
+                    (postn.cov[i] - p_rts[t][i]).abs() < 1e-11,
+                    "smooth_nd cov mismatch at t={t}[{i}]"
+                );
+            }
         }
     }
 }

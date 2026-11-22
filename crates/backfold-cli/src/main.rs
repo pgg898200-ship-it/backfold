@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use backfold_core::digest::build_stream_digest;
 use backfold_core::ops::{
-    ebh_reject, CusumMonoid, EProcessMonoid, EwmaMonoid, KalmanFilter1D, KalmanFilter2D,
-    MomentsMonoid, RidgeMonoid,
+    ebh_reject, smooth_2d, CovarianceMonoid, CusumMonoid, EProcessMonoid, EwmaMonoid,
+    KalmanFilter1D, KalmanFilter2D, MomentsMonoid, RidgeMonoid,
 };
 use backfold_core::swarm::SwarmLedger;
 use backfold_core::{EventKey, FoldTree};
@@ -229,6 +229,139 @@ fn seq_ridge_8d(ts: &[i64], xs: &[[f64; 8]], ys: &[f64], lambda: f64, alpha: f64
         w[i] = sum / l[i][i];
     }
     w
+}
+
+/// Handwritten -O3 sequential forward-backward Rauch-Tung-Striebel (1965) smoother + exact
+/// innovation marginal log-likelihood for 2D constant-velocity Kalman model (dt = 1).
+fn seq_rts_2d_cv(
+    ys: &[f64],
+    q_accel: f64,
+    r_obs: f64,
+    query_t: usize,
+) -> ([f64; 2], [f64; 4], f64) {
+    const LN_TAU: f64 = 1.837_877_066_409_345_3;
+    let n = ys.len();
+    let keep = n - query_t;
+    let mut m_filt = Vec::with_capacity(keep);
+    let mut p_filt = Vec::with_capacity(keep);
+    let mut m_pred = Vec::with_capacity(keep);
+    let mut p_pred = Vec::with_capacity(keep);
+
+    let mut m = [0.0f64; 2];
+    let mut p = [10.0, 0.0, 0.0, 10.0];
+    let q00 = q_accel / 3.0;
+    let q01 = q_accel / 2.0;
+    let q11 = q_accel;
+    let mut log_lik = 0.0;
+
+    for (k, &y) in ys.iter().enumerate() {
+        let mp0 = m[0] + m[1];
+        let mp1 = m[1];
+        let pp00 = p[0] + p[1] + p[2] + p[3] + q00;
+        let pp01 = p[1] + p[3] + q01;
+        let pp11 = p[3] + q11;
+        let s = pp00 + r_obs;
+        let innov = y - mp0;
+        log_lik += -0.5 * (LN_TAU + s.ln() + innov * innov / s);
+        let k0 = pp00 / s;
+        let k1 = pp01 / s;
+        m[0] = mp0 + k0 * innov;
+        m[1] = mp1 + k1 * innov;
+        let a00 = 1.0 - k0;
+        let np00 = a00 * a00 * pp00 + k0 * k0 * r_obs;
+        let np01 = a00 * (pp01 - k1 * pp00) + k0 * k1 * r_obs;
+        let np11 = pp11 - 2.0 * k1 * pp01 + k1 * k1 * (pp00 + r_obs);
+        p = [np00, np01, np01, np11];
+        if k >= query_t {
+            m_pred.push([mp0, mp1]);
+            p_pred.push([pp00, pp01, pp01, pp11]);
+            m_filt.push(m);
+            p_filt.push(p);
+        }
+    }
+
+    // Backward RTS pass from n - 2 down to query_t
+    let mut ms = *m_filt.last().unwrap();
+    let mut ps = *p_filt.last().unwrap();
+    for idx in (0..(keep - 1)).rev() {
+        let pf = p_filt[idx];
+        let pp = p_pred[idx + 1];
+        let det = pp[0] * pp[3] - pp[1] * pp[2];
+        let inv_det = 1.0 / det;
+        let ip00 = pp[3] * inv_det;
+        let ip01 = -pp[1] * inv_det;
+        let ip11 = pp[0] * inv_det;
+
+        // P_filt * F^T where F = [[1, 1], [0, 1]] => F^T = [[1, 0], [1, 1]]
+        let pft00 = pf[0] + pf[1];
+        let pft01 = pf[1];
+        let pft10 = pf[2] + pf[3];
+        let pft11 = pf[3];
+
+        // G = (P_filt F^T) * P_pred^{-1}
+        let g00 = pft00 * ip00 + pft01 * ip01;
+        let g01 = pft00 * ip01 + pft01 * ip11;
+        let g10 = pft10 * ip00 + pft11 * ip01;
+        let g11 = pft10 * ip01 + pft11 * ip11;
+
+        let dm0 = ms[0] - m_pred[idx + 1][0];
+        let dm1 = ms[1] - m_pred[idx + 1][1];
+        ms = [
+            m_filt[idx][0] + g00 * dm0 + g01 * dm1,
+            m_filt[idx][1] + g10 * dm0 + g11 * dm1,
+        ];
+
+        let dp00 = ps[0] - pp[0];
+        let dp01 = ps[1] - pp[1];
+        let dp11 = ps[3] - pp[3];
+        // G * dP * G^T
+        let t00 = g00 * dp00 + g01 * dp01;
+        let t01 = g00 * dp01 + g01 * dp11;
+        let t10 = g10 * dp00 + g11 * dp01;
+        let t11 = g10 * dp01 + g11 * dp11;
+        let c00 = pf[0] + t00 * g00 + t01 * g01;
+        let c01 = pf[1] + 0.5 * ((t00 * g10 + t01 * g11) + (t10 * g00 + t11 * g01));
+        let c11 = pf[3] + t10 * g10 + t11 * g11;
+        ps = [c00, c01, c01, c11];
+    }
+
+    (ms, ps, log_lik)
+}
+
+fn seq_cov_8d(xs: &[[f64; 8]]) -> [[f64; 8]; 8] {
+    let n = xs.len() as f64;
+    let mut mean = [0.0f64; 8];
+    for row in xs {
+        for i in 0..8 {
+            mean[i] += row[i];
+        }
+    }
+    for m in &mut mean {
+        *m /= n;
+    }
+    let mut cov = [[0.0f64; 8]; 8];
+    for row in xs {
+        let mut d = [0.0f64; 8];
+        for i in 0..8 {
+            d[i] = row[i] - mean[i];
+        }
+        for i in 0..8 {
+            let di = d[i];
+            for j in i..8 {
+                cov[i][j] += di * d[j];
+            }
+        }
+    }
+    let inv = 1.0 / (n - 1.0);
+    for i in 0..8 {
+        cov[i][i] *= inv;
+        for j in (i + 1)..8 {
+            let v = cov[i][j] * inv;
+            cov[i][j] = v;
+            cov[j][i] = v;
+        }
+    }
+    cov
 }
 
 fn run_bench_suite(as_json: bool) {
@@ -518,6 +651,57 @@ fn run_bench_suite(as_json: bool) {
                 speedup_x: seq_us / bf_us.max(1e-9),
                 max_abs_diff: diff,
             });
+
+            // 5b. Exact O(log T) RTS Kalman Smoother + Marginal Log-Likelihood after late edit!
+            let query_t = n / 2;
+            let (oms, ops, o_ll) = seq_rts_2d_cv(&xs, 1e-3, 0.25, query_t);
+            let seq_rts_us = time_us(
+                || {
+                    std::hint::black_box(seq_rts_2d_cv(&xs, 1e-3, 0.25, query_t));
+                },
+                2,
+                if n <= 100_000 { 9 } else { 5 },
+            );
+            let bf_rts_us = time_us(
+                || {
+                    tree_k2.upsert(
+                        EventKey::at(ts[edit_idx]),
+                        KalmanFilter2D::from_constant_velocity(1.0, 1e-3, 0.25, edited_val).unwrap(),
+                    );
+                    std::hint::black_box(smooth_2d(&tree_k2, query_t as i64, m0, p0).unwrap());
+                    std::hint::black_box(tree_k2.summary().log_marginal_likelihood(m0, p0).unwrap());
+                    tree_k2.upsert(
+                        EventKey::at(ts[edit_idx]),
+                        KalmanFilter2D::from_constant_velocity(1.0, 1e-3, 0.25, orig_val).unwrap(),
+                    );
+                    std::hint::black_box(smooth_2d(&tree_k2, query_t as i64, m0, p0).unwrap());
+                    std::hint::black_box(tree_k2.summary().log_marginal_likelihood(m0, p0).unwrap());
+                },
+                10,
+                101,
+            ) * 0.5;
+            tree_k2.upsert(
+                EventKey::at(ts[edit_idx]),
+                KalmanFilter2D::from_constant_velocity(1.0, 1e-3, 0.25, edited_val).unwrap(),
+            );
+            let (bms, bps) = smooth_2d(&tree_k2, query_t as i64, m0, p0).unwrap();
+            let b_ll = tree_k2.summary().log_marginal_likelihood(m0, p0).unwrap();
+            let mut rts_diff = (b_ll - o_ll).abs() / o_ll.abs().max(1.0);
+            for i in 0..2 {
+                rts_diff = rts_diff.max((bms[i] - oms[i]).abs());
+            }
+            for i in 0..4 {
+                rts_diff = rts_diff.max((bps[i] - ops[i]).abs());
+            }
+            assert!(rts_diff < 1e-9, "kalman2d rts diff {rts_diff} (b_ll={b_ll}, o_ll={o_ll})");
+            late_rows.push(BenchRow {
+                operator: "kalman_2d_rts_smooth_plus_loglik".into(),
+                n,
+                backfold_us: bf_rts_us,
+                seq_rust_o3_us: seq_rts_us,
+                speedup_x: seq_rts_us / bf_rts_us.max(1e-9),
+                max_abs_diff: rts_diff,
+            });
         }
 
         if n <= 100_000 {
@@ -598,6 +782,63 @@ fn run_bench_suite(as_json: bool) {
                 seq_rust_o3_us: seq_us,
                 speedup_x: seq_us / bf_us.max(1e-9),
                 max_abs_diff: diff,
+            });
+
+            // 7. 8D Compensated Multivariate Covariance late edit
+            let cov_entries: Vec<_> = ts
+                .iter()
+                .zip(x8.iter())
+                .map(|(&t, row)| (EventKey::at(t), CovarianceMonoid::singleton(t, row).unwrap()))
+                .collect();
+            let mut tree_cov: FoldTree<CovarianceMonoid, 4> =
+                FoldTree::from_sorted(8, cov_entries);
+            let orig_row = x8[edit_idx];
+            let mut edited_row = orig_row;
+            edited_row[0] += 5.0;
+            edited_row[3] -= 3.0;
+            x8[edit_idx] = edited_row;
+            let o_cov = seq_cov_8d(&x8);
+            let seq_cov_us = time_us(
+                || {
+                    std::hint::black_box(seq_cov_8d(&x8));
+                },
+                2,
+                11,
+            );
+            let bf_cov_us = time_us(
+                || {
+                    tree_cov.upsert(
+                        EventKey::at(ts[edit_idx]),
+                        CovarianceMonoid::singleton(ts[edit_idx], &edited_row).unwrap(),
+                    );
+                    std::hint::black_box(tree_cov.summary().covariance(1));
+                    tree_cov.upsert(
+                        EventKey::at(ts[edit_idx]),
+                        CovarianceMonoid::singleton(ts[edit_idx], &orig_row).unwrap(),
+                    );
+                },
+                10,
+                101,
+            ) * 0.5;
+            tree_cov.upsert(
+                EventKey::at(ts[edit_idx]),
+                CovarianceMonoid::singleton(ts[edit_idx], &edited_row).unwrap(),
+            );
+            let bf_cov = tree_cov.summary().covariance(1);
+            let mut cov_diff = 0.0f64;
+            for i in 0..8 {
+                for j in 0..8 {
+                    cov_diff = cov_diff.max((bf_cov[i * 8 + j] - o_cov[i][j]).abs());
+                }
+            }
+            assert!(cov_diff < 1e-10, "cov8d diff {cov_diff}");
+            late_rows.push(BenchRow {
+                operator: "covariance_8d_late_edit".into(),
+                n,
+                backfold_us: bf_cov_us,
+                seq_rust_o3_us: seq_cov_us,
+                speedup_x: seq_cov_us / bf_cov_us.max(1e-9),
+                max_abs_diff: cov_diff,
             });
         }
 
@@ -682,9 +923,9 @@ fn run_demo() {
     let ts: Vec<i64> = (0..n as i64).collect();
     let mut ys: Vec<f64> = (0..n).map(|i| 0.02 * (i as f64) + rng.normal()).collect();
 
-    println!("## backfold demo: 5 streaming superpowers verified live on 100,000 ticks\n");
+    println!("## backfold demo: 6 streaming superpowers verified live on 100,000 ticks\n");
 
-    // 1. Out-of-order 2D Kalman repair
+    // 1. Out-of-order 2D Kalman repair + exact O(log T) RTS smoothing & marginal log-likelihood
     let k_entries: Vec<_> = ts
         .iter()
         .zip(ys.iter())
@@ -728,7 +969,43 @@ fn run_demo() {
         k_err
     );
 
-    // 2. CUSUM + O(log T) first alarm
+    // 2. Exact O(log T) RTS Bayesian Smoothing + Marginal Log-Likelihood after late edit
+    let query_t = 50_000usize;
+    let seq_rts_us = time_us(
+        || {
+            std::hint::black_box(seq_rts_2d_cv(&ys, 1e-3, 0.25, query_t));
+        },
+        1,
+        5,
+    );
+    let bf_rts_us = time_us(
+        || {
+            kf.upsert(
+                EventKey::at(33_333),
+                KalmanFilter2D::from_constant_velocity(1.0, 1e-3, 0.25, ys[33_333]).unwrap(),
+            );
+            std::hint::black_box(smooth_2d(&kf, query_t as i64, m0, p0).unwrap());
+            std::hint::black_box(kf.summary().log_marginal_likelihood(m0, p0).unwrap());
+        },
+        10,
+        101,
+    );
+    let (oms, _, o_ll) = seq_rts_2d_cv(&ys, 1e-3, 0.25, query_t);
+    let (bms, _) = smooth_2d(&kf, query_t as i64, m0, p0).unwrap();
+    let b_ll = kf.summary().log_marginal_likelihood(m0, p0).unwrap();
+    let rts_err = (bms[0] - oms[0])
+        .abs()
+        .max((bms[1] - oms[1]).abs())
+        .max((b_ll - o_ll).abs() / o_ll.abs().max(1.0));
+    println!(
+        "2. [Exact RTS Smooth + LogLik]  T=100k smooth@50k + log p(y): {:.2} µs vs {:.1} µs seq RTS ({:.0}× faster, max_err={:.2e})",
+        bf_rts_us,
+        seq_rts_us,
+        seq_rts_us / bf_rts_us.max(1e-9),
+        rts_err
+    );
+
+    // 3. CUSUM + O(log T) first alarm
     let mut zs: Vec<f64> = (0..n).map(|_| rng.normal()).collect();
     for v in &mut zs[60_000..60_040] {
         *v += 2.2;
@@ -754,11 +1031,11 @@ fn run_demo() {
         .map(|(k, _)| k.event_time);
     let edit_us = t_edit.elapsed().as_secs_f64() * 1e6;
     println!(
-        "2. [CUSUM O(log T) Alarm]       T=100k: first alarm moved {:?} -> {:?} after 10 late edits in {:.2} µs",
+        "3. [CUSUM O(log T) Alarm]       T=100k: first alarm moved {:?} -> {:?} after 10 late edits in {:.2} µs",
         fa_before, fa_after, edit_us
     );
 
-    // 3. 64-agent persistent O(1) counterfactual forking + echo-proof CRDT merge
+    // 4. 64-agent persistent O(1) counterfactual forking + echo-proof CRDT merge
     let t_f0 = Instant::now();
     let forks: Vec<_> = (0..64).map(|_| cus.fork()).collect();
     let fork_ns_each = t_f0.elapsed().as_nanos() as f64 / 64.0;
@@ -778,7 +1055,7 @@ fn run_demo() {
     let merged_eval = ledger.merge_all().summary().e_value();
     let st = ledger.stats();
     println!(
-        "3. [Multi-Agent CRDT + Fork]    64 forks of T=100k in {:.1} ns/fork (0 B copied, len={}); echo dedup: {} raw -> {} unique ({} echoes dropped, 0% churn, e_val={:.2})",
+        "4. [Multi-Agent CRDT + Fork]    64 forks of T=100k in {:.1} ns/fork (0 B copied, len={}); echo dedup: {} raw -> {} unique ({} echoes dropped, 0% churn, e_val={:.2})",
         fork_ns_each,
         forks[0].len(),
         st.raw_observations,
@@ -787,7 +1064,7 @@ fn run_demo() {
         merged_eval
     );
 
-    // 4. 500-channel anytime-valid e-BH FDR control with 50 loud 3x-noise distractors
+    // 5. 500-channel anytime-valid e-BH FDR control with 50 loud 3x-noise distractors
     let mut e_vals = Vec::with_capacity(500);
     for ch in 0..500 {
         let sigma = if (10..60).contains(&ch) { 3.0 } else { 1.0 };
@@ -817,14 +1094,14 @@ fn run_demo() {
     let loud_fp = rej.iter().filter(|&&c| (10..60).contains(&c)).count();
     let fp = rej.len() - tp;
     println!(
-        "4. [500-Stream e-BH FDR]        10 true shocks + 50 3x-loud traps -> TP={}/10, FP={}, loud-trap FP={} (FDR={:.3} <= 0.05)",
+        "5. [500-Stream e-BH FDR]        10 true shocks + 50 3x-loud traps -> TP={}/10, FP={}, loud-trap FP={} (FDR={:.3} <= 0.05)",
         tp,
         fp,
         loud_fp,
         fp as f64 / (rej.len().max(1) as f64)
     );
 
-    // 5. <350-token lossless-recoverable Agent Stream Digest
+    // 6. <350-token lossless-recoverable Agent Stream Digest
     let mut dvals: Vec<f64> = (0..n).map(|_| rng.normal()).collect();
     for v in &mut dvals[45_000..75_000] {
         *v += 1.8;
@@ -836,7 +1113,7 @@ fn run_demo() {
     let dig = build_stream_digest("demo_telemetry", &ts, &dvals, 4, 10.0).unwrap();
     let dig_ms = t_d0.elapsed().as_secs_f64() * 1e3;
     println!(
-        "5. [Agent Stream Digest]        100,000 ticks (~{}k raw tok) -> ~{} tok ({:.0}× compression) in {:.1} ms | first_alarm={:?} | max={:.2}@{}\n",
+        "6. [Agent Stream Digest]        100,000 ticks (~{}k raw tok) -> ~{} tok ({:.0}× compression) in {:.1} ms | first_alarm={:?} | max={:.2}@{}\n",
         dig.raw_approx_tokens / 1000,
         dig.digest_approx_tokens,
         dig.compression_ratio,
@@ -846,7 +1123,7 @@ fn run_demo() {
         dig.global_max_ts
     );
     println!(
-        "All 5 live scenarios verified in {:.2} s (0 approximations, 0 downloads).",
+        "All 6 live scenarios verified in {:.2} s (0 approximations, 0 downloads).",
         t_total.elapsed().as_secs_f64()
     );
 }
@@ -884,7 +1161,10 @@ fn read_csv_columns(
 }
 
 fn print_help() {
-    println!("backfold 0.1.0 — O(log T) out-of-order streaming inference & agent stream compression\n");
+    println!(
+        "backfold {} — O(log T) out-of-order streaming inference, RTS smoothing & agent stream compression\n",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("USAGE:");
     println!("  backfold demo");
     println!("  backfold bench [--json]");
@@ -899,7 +1179,7 @@ fn main() {
         return;
     }
     if args[1] == "--version" || args[1] == "-V" {
-        println!("backfold 0.1.0");
+        println!("backfold {}", env!("CARGO_PKG_VERSION"));
         return;
     }
 

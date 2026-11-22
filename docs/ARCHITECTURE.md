@@ -26,15 +26,16 @@ Each tree node stores `Arc<Node<M, B>>` with cached associative summary `summary
 - **CRDT Merge (`tree_a.merge(&tree_b)`):** Associative, idempotent union with `Arc::ptr_eq` subtree short-circuiting so forked agents sharing 99.9% of history skip unchanged subtrees.
 - **Monotone Prefix Binary Search (`find_first_prefix`):** $O(\log_B T)$ top-down descent carrying accumulated prefix summary `acc`, locating the exact earliest timestamp where a monotone statistic (e.g., Page CUSUM peak or e-detector) crosses a threshold $h$.
 
-## 3. The Six Exact Associative Monoids
+## 3. The Seven Exact Associative Monoids
 
 | Monoid | Mathematical Formulation | Associative Combine Cost | Numerical Hardening |
 |---|---|---|---|
 | **`MomentsMonoid`** | Chan–Golub–LeVeque / Pébay (2008) centered $(n, \mu, \mu_{\text{lo}}, M_2, M_3, M_4, \min, \max)$ | $O(1)$ (~15 ns) | Knuth TwoSum 106-bit double-double mean; `<1e-12` variance error even on $10^{12} + \mathcal{N}(0,1)$ |
+| **`CovarianceMonoid`** | Pébay centered multivariate $(n, \mu, \mu_{\text{lo}}, M_{2,\text{upper}})$ + covariance/correlation/Mahalanobis | $O(D^2)$ in-place `combine_assign` (inline stack for $D \le 8$) | 106-bit Knuth TwoSum mean vector + Jacobi-equilibrated Cholesky (`mahalanobis_sq`, factored `mahalanobis_sq_batch`) |
 | **`EwmaMonoid`** | Continuous-time irregular-$\Delta t$ exponentially weighted mean & variance | $O(1)$ (~12 ns) | Subnormal-safe decay clamp ($\lambda \Delta t > 700 \Rightarrow d = 0$) |
 | **`CusumMonoid`** | Two-sided Page CUSUM tropical semiring $(\Sigma, P_{\text{nonempty}}, M_{\text{suff}}, B_{\text{sub}})$ | $O(1)$ (~10 ns) | Non-empty prefix max guarantees exact $O(\log T)$ first-alarm binary descent |
 | **`EProcessMonoid`** | Waudby-Smith–Ramdas 8-point betting martingale + Page e-CUSUM + log-sum-exp Shiryaev–Roberts & all-subinterval scan | $O(K)$ ($K=8$) | Bounded odd $\tanh(z/2)$ score + composite-null margin + Wang–Ramdas `e-BH` ($\mathbb{E}_0[e] \le 1$, Cauchy-safe) |
-| **`KalmanFilter1D` / `KalmanFilter2D` / `KalmanMonoid`** | Särkkä & García-Fernández (2020, IEEE TAC) 5-tuple $(A, b, C, \eta, J)$ associative Gaussian filter | $O(D^3)$ (zero-alloc stack for $D \in \{1,2\}$) | Joseph-form PSD leaf updates, symmetrization, x86-64 subnormal flush (`|x| < 1e-290 => 0`) |
+| **`KalmanFilter1D` / `KalmanFilter2D` / `KalmanMonoid`** | Särkkä & García-Fernández (2020, IEEE TAC) $(A, b, C, \eta, J)$ + **Anchor-Centered Potential $(r, \tilde{z})$** + exact $O(\log T)$ RTS smoother (`smooth_1d`/`2d`/`nd`) | $O(D^3)$ (zero-alloc stack for $D \in \{1,2\}$) | Joseph-form PSD leaves, x86-64 subnormal flush (`<1e-290 => 0`), coordinate-aligned input anchor eliminating $O(y^2/S)$ `log_z` cancellation (`1.14e-15` rel err @ 100k) |
 | **`RidgeMonoid`** | Continuous-time discounted Gram $(X^\top W X, X^\top W y, y^\top W y)$ | $O(D^2)$ in-place `combine_assign` (inline stack for $D \le 8$) | Jacobi equilibration $D^{-1/2}(G+\alpha I)D^{-1/2}$ + pivoted LU + relative-Tikhonov rank-deficient fallback |
 
 ## 4. Top-Down `<350`-Token Lossless-Recoverable Agent Digest

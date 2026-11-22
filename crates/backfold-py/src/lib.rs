@@ -5,7 +5,8 @@
 //! - `EwmaStream` (continuous-time irregular-dt EWMA)
 //! - `CusumStream` (two-sided tropical-semiring Page CUSUM + O(log T) first-crossing search)
 //! - `EProcessStream` (anytime-valid betting martingale + Page e-CUSUM + Shiryaev-Roberts e-value)
-//! - `KalmanStream` (zero-alloc 1D/2D + general-dim Särkkä-García-Fernández Kalman filter)
+//! - `KalmanStream` (zero-alloc 1D/2D + general-dim Särkkä-García-Fernández filter, exact O(log T) RTS smoother & marginal log-likelihood)
+//! - `CovarianceStream` (106-bit compensated multivariate covariance, correlation & Mahalanobis anomaly monoid)
 //! - `RidgeStream` (continuous-time discounted Ridge with Jacobi-equilibrated Cholesky)
 //! - `SwarmEProcessLedger` (echo-proof conflict-free multi-agent CRDT ledger)
 //! - `BitemporalMoments` (zero-lookahead point-in-time bitemporal query engine)
@@ -15,8 +16,9 @@
 
 use backfold_core::digest::{build_stream_digest, causal_robust_scale as core_robust_scale, StreamDigest};
 use backfold_core::ops::{
-    ebh_reject as core_ebh_reject, CusumMonoid, EProcessMonoid, EwmaMonoid, KalmanFilter1D,
-    KalmanFilter2D, KalmanMonoid, MomentsMonoid, RidgeMonoid, RidgeSolution,
+    ebh_reject as core_ebh_reject, smooth_1d, smooth_2d, smooth_nd, CovarianceMonoid, CusumMonoid,
+    EProcessMonoid, EwmaMonoid, KalmanFilter1D, KalmanFilter2D, KalmanMonoid, MomentsMonoid,
+    RidgeMonoid, RidgeSolution,
 };
 use backfold_core::swarm::{BitemporalFold, SwarmLedger};
 use backfold_core::{BackfoldError, EventKey, FoldTree};
@@ -24,6 +26,8 @@ use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+
+type SmoothBatch = (Vec<Vec<f64>>, Vec<Vec<f64>>);
 
 fn to_py_err(e: BackfoldError) -> PyErr {
     PyValueError::new_err(e.to_string())
@@ -965,6 +969,8 @@ impl KalmanStream {
                                     c: vec![v.c],
                                     eta: vec![v.eta],
                                     j: vec![v.j],
+                                    anchor: vec![v.anchor],
+                                    log_z: v.log_z,
                                 },
                             );
                         }
@@ -981,6 +987,8 @@ impl KalmanStream {
                                     c: v.c.to_vec(),
                                     eta: v.eta.to_vec(),
                                     j: v.j.to_vec(),
+                                    anchor: v.anchor.to_vec(),
+                                    log_z: v.log_z,
                                 },
                             );
                         }
@@ -1098,6 +1106,137 @@ impl KalmanStream {
                 let post = t.range(s, e).posterior(&m0, &p0).map_err(to_py_err)?;
                 Ok((post.mean, post.cov))
             }
+        }
+    }
+
+    /// Exact O(log T) Rauch-Tung-Striebel (RTS) smoothed posterior `p(x_t | y_{1:T})` at timestamp `t`.
+    fn smooth_at(&self, t: i64, m0: Vec<f64>, p0: Vec<f64>) -> PyResult<(Vec<f64>, Vec<f64>)> {
+        match &self.inner {
+            KalmanInner::D1(tree) => {
+                if m0.len() != 1 || p0.len() != 1 {
+                    return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+                }
+                let (m, p) = smooth_1d(tree, t, m0[0], p0[0]).map_err(to_py_err)?;
+                Ok((vec![m], vec![p]))
+            }
+            KalmanInner::D2(tree) => {
+                if m0.len() != 2 || p0.len() != 4 {
+                    return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
+                }
+                let (m, p) =
+                    smooth_2d(tree, t, [m0[0], m0[1]], [p0[0], p0[1], p0[2], p0[3]])
+                        .map_err(to_py_err)?;
+                Ok((m.to_vec(), p.to_vec()))
+            }
+            KalmanInner::General(tree) => {
+                let post = smooth_nd(tree, t, &m0, &p0).map_err(to_py_err)?;
+                Ok((post.mean, post.cov))
+            }
+        }
+    }
+
+    /// Batch O(K log T) exact RTS smoothing at multiple query timestamps `ts` in a single Rust loop.
+    fn smooth_many(
+        &self,
+        py: Python<'_>,
+        ts: &Bound<'_, PyAny>,
+        m0: Vec<f64>,
+        p0: Vec<f64>,
+    ) -> PyResult<SmoothBatch> {
+        let t_vec = extract_i64_vec(py, ts)?;
+        let mut means = Vec::with_capacity(t_vec.len());
+        let mut covs = Vec::with_capacity(t_vec.len());
+        match &self.inner {
+            KalmanInner::D1(tree) => {
+                if m0.len() != 1 || p0.len() != 1 {
+                    return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+                }
+                for t in t_vec {
+                    let (m, p) = smooth_1d(tree, t, m0[0], p0[0]).map_err(to_py_err)?;
+                    means.push(vec![m]);
+                    covs.push(vec![p]);
+                }
+            }
+            KalmanInner::D2(tree) => {
+                if m0.len() != 2 || p0.len() != 4 {
+                    return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
+                }
+                let m0a = [m0[0], m0[1]];
+                let p0a = [p0[0], p0[1], p0[2], p0[3]];
+                for t in t_vec {
+                    let (m, p) = smooth_2d(tree, t, m0a, p0a).map_err(to_py_err)?;
+                    means.push(m.to_vec());
+                    covs.push(p.to_vec());
+                }
+            }
+            KalmanInner::General(tree) => {
+                for t in t_vec {
+                    let post = smooth_nd(tree, t, &m0, &p0).map_err(to_py_err)?;
+                    means.push(post.mean);
+                    covs.push(post.cov);
+                }
+            }
+        }
+        Ok((means, covs))
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` in O(1) at the root.
+    fn log_marginal_likelihood(&self, m0: Vec<f64>, p0: Vec<f64>) -> PyResult<f64> {
+        match &self.inner {
+            KalmanInner::D1(t) => {
+                if m0.len() != 1 || p0.len() != 1 {
+                    return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+                }
+                t.summary()
+                    .log_marginal_likelihood(m0[0], p0[0])
+                    .map_err(to_py_err)
+            }
+            KalmanInner::D2(t) => {
+                if m0.len() != 2 || p0.len() != 4 {
+                    return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
+                }
+                t.summary()
+                    .log_marginal_likelihood([m0[0], m0[1]], [p0[0], p0[1], p0[2], p0[3]])
+                    .map_err(to_py_err)
+            }
+            KalmanInner::General(t) => t
+                .summary()
+                .log_marginal_likelihood(&m0, &p0)
+                .map_err(to_py_err),
+        }
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{t_start:t_end})` in O(log T).
+    fn range_log_marginal_likelihood(
+        &self,
+        t_start: i64,
+        t_end: i64,
+        m0: Vec<f64>,
+        p0: Vec<f64>,
+    ) -> PyResult<f64> {
+        let s = EventKey::time_start(t_start);
+        let e = EventKey::time_end(t_end);
+        match &self.inner {
+            KalmanInner::D1(t) => {
+                if m0.len() != 1 || p0.len() != 1 {
+                    return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+                }
+                t.range(s, e)
+                    .log_marginal_likelihood(m0[0], p0[0])
+                    .map_err(to_py_err)
+            }
+            KalmanInner::D2(t) => {
+                if m0.len() != 2 || p0.len() != 4 {
+                    return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
+                }
+                t.range(s, e)
+                    .log_marginal_likelihood([m0[0], m0[1]], [p0[0], p0[1], p0[2], p0[3]])
+                    .map_err(to_py_err)
+            }
+            KalmanInner::General(t) => t
+                .range(s, e)
+                .log_marginal_likelihood(&m0, &p0)
+                .map_err(to_py_err),
         }
     }
 
@@ -1281,6 +1420,178 @@ impl RidgeStream {
 }
 
 // ---------------------------------------------------------------------------
+// 6b. CovarianceStream
+// ---------------------------------------------------------------------------
+
+fn flat_to_rows(flat: &[f64], dim: usize) -> Vec<Vec<f64>> {
+    flat.chunks_exact(dim).map(|r| r.to_vec()).collect()
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct CovarianceStream {
+    dim: usize,
+    tree: FoldTree<CovarianceMonoid, 4>,
+}
+
+#[pymethods]
+impl CovarianceStream {
+    #[new]
+    fn new(dim: usize) -> PyResult<Self> {
+        if dim == 0 {
+            return Err(PyValueError::new_err("dim must be >= 1"));
+        }
+        Ok(Self {
+            dim,
+            tree: FoldTree::new(dim),
+        })
+    }
+
+    #[pyo3(signature = (ts, xmat, source_id = 0))]
+    fn ingest(
+        &mut self,
+        py: Python<'_>,
+        ts: &Bound<'_, PyAny>,
+        xmat: &Bound<'_, PyAny>,
+        source_id: u64,
+    ) -> PyResult<()> {
+        let t_vec = extract_i64_vec(py, ts)?;
+        let (x_flat, n_rows) = extract_f64_mat(py, xmat, self.dim)?;
+        if t_vec.len() != n_rows {
+            return Err(PyValueError::new_err("ts and xmat rows must have equal length"));
+        }
+        let sorted = is_non_decreasing(&t_vec);
+        let mut entries = Vec::with_capacity(n_rows);
+        for i in 0..n_rows {
+            let row = &x_flat[i * self.dim..(i + 1) * self.dim];
+            let m = CovarianceMonoid::singleton(t_vec[i], row).map_err(to_py_err)?;
+            entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
+        }
+        if self.tree.is_empty() && sorted {
+            let ctx = *self.tree.ctx();
+            self.tree = FoldTree::from_sorted(ctx, entries);
+        } else {
+            self.tree.upsert_batch(entries);
+        }
+        Ok(())
+    }
+
+    #[pyo3(signature = (ts, x, source_id = 0, seq = 0))]
+    fn upsert(
+        &mut self,
+        ts: i64,
+        x: Vec<f64>,
+        source_id: u64,
+        seq: u64,
+    ) -> PyResult<()> {
+        if x.len() != self.dim {
+            return Err(PyValueError::new_err(format!(
+                "expected vector len {}, got {}",
+                self.dim,
+                x.len()
+            )));
+        }
+        let m = CovarianceMonoid::singleton(ts, &x).map_err(to_py_err)?;
+        self.tree.upsert(EventKey::sourced(ts, source_id, seq), m);
+        Ok(())
+    }
+
+    #[pyo3(signature = (ts, source_id = 0, seq = 0))]
+    fn retract(&mut self, ts: i64, source_id: u64, seq: u64) -> bool {
+        self.tree.retract(EventKey::sourced(ts, source_id, seq)).is_some()
+    }
+
+    fn mean(&self) -> Vec<f64> {
+        self.tree.summary().mean().to_vec()
+    }
+
+    #[pyo3(signature = (ddof = 1))]
+    fn covariance(&self, ddof: u64) -> Vec<Vec<f64>> {
+        let flat = self.tree.summary().covariance(ddof);
+        flat_to_rows(&flat, self.dim)
+    }
+
+    fn correlation(&self) -> Vec<Vec<f64>> {
+        let flat = self.tree.summary().correlation();
+        flat_to_rows(&flat, self.dim)
+    }
+
+    #[pyo3(signature = (x, ridge_eps = 1e-6))]
+    fn mahalanobis_sq(&self, x: Vec<f64>, ridge_eps: f64) -> PyResult<f64> {
+        self.tree
+            .summary()
+            .mahalanobis_sq(&x, ridge_eps)
+            .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (xmat, ridge_eps = 1e-6))]
+    fn mahalanobis_many(
+        &self,
+        py: Python<'_>,
+        xmat: &Bound<'_, PyAny>,
+        ridge_eps: f64,
+    ) -> PyResult<Vec<f64>> {
+        let (x_flat, _) = extract_f64_mat(py, xmat, self.dim)?;
+        self.tree
+            .summary()
+            .mahalanobis_sq_batch(&x_flat, ridge_eps)
+            .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (t_start, t_end, ddof = 1))]
+    fn range_covariance(&self, t_start: i64, t_end: i64, ddof: u64) -> Vec<Vec<f64>> {
+        let flat = self
+            .tree
+            .range(EventKey::time_start(t_start), EventKey::time_end(t_end))
+            .covariance(ddof);
+        flat_to_rows(&flat, self.dim)
+    }
+
+    fn range_correlation(&self, t_start: i64, t_end: i64) -> Vec<Vec<f64>> {
+        let flat = self
+            .tree
+            .range(EventKey::time_start(t_start), EventKey::time_end(t_end))
+            .correlation();
+        flat_to_rows(&flat, self.dim)
+    }
+
+    #[pyo3(signature = (t_start, t_end, x, ridge_eps = 1e-6))]
+    fn range_mahalanobis_sq(
+        &self,
+        t_start: i64,
+        t_end: i64,
+        x: Vec<f64>,
+        ridge_eps: f64,
+    ) -> PyResult<f64> {
+        self.tree
+            .range(EventKey::time_start(t_start), EventKey::time_end(t_end))
+            .mahalanobis_sq(&x, ridge_eps)
+            .map_err(to_py_err)
+    }
+
+    fn fork(&self) -> Self {
+        Self {
+            dim: self.dim,
+            tree: self.tree.fork(),
+        }
+    }
+
+    fn merge(&mut self, other: &CovarianceStream) -> PyResult<()> {
+        if self.dim != other.dim {
+            return Err(PyValueError::new_err(
+                "cannot merge CovarianceStreams of different dimensions",
+            ));
+        }
+        self.tree = self.tree.merge(&other.tree);
+        Ok(())
+    }
+
+    fn __len__(&self) -> usize {
+        self.tree.len()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 7. SwarmEProcessLedger & BitemporalMoments
 // ---------------------------------------------------------------------------
 
@@ -1448,6 +1759,7 @@ fn _backfold(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<EProcessStream>()?;
     m.add_class::<KalmanStream>()?;
     m.add_class::<RidgeStream>()?;
+    m.add_class::<CovarianceStream>()?;
     m.add_class::<SwarmEProcessLedger>()?;
     m.add_class::<BitemporalMoments>()?;
     m.add_function(wrap_pyfunction!(ebh_reject, m)?)?;

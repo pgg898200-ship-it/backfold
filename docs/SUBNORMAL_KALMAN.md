@@ -1,12 +1,12 @@
-# How x86-64 Subnormal Traps Slowed Our Exact 2D Kalman Filter by 10.9× (And Reaching 4,297× Over `-O3` Sequential Rust)
+# Four Numerical & Systems Traps in Exact $O(\log T)$ Streaming Inference (Subnormal Kalman Stalls, Anchor-Centered RTS Log-Likelihood, 106-Bit Moments, and Shiryaev–Roberts e-BH)
 
-When we built [`backfold`](../README.md) — a persistent $O(\log T)$ associative-monoid engine for out-of-order, retractable, forkable streaming inference in `#![forbid(unsafe_code)]` Rust — we hit three genuinely surprising numerical and systems traps. Every single one showed up immediately because our benchmark harness asserts **exact mathematical parity (`max |diff| <= 1e-12`) against independent sequential oracles** on every run.
+When we built [`backfold`](../README.md) — a persistent $O(\log T)$ associative-monoid engine for out-of-order, retractable, forkable streaming inference in `#![forbid(unsafe_code)]` Rust — we hit **four genuinely surprising numerical and systems traps**. Every single one showed up immediately because our benchmark harness asserts **exact mathematical parity (`max |diff| <= 1e-12`) against independent sequential oracles** on every run.
 
-Here is the real engineering post-mortem of all three.
+Here is the real engineering post-mortem of all four.
 
 ---
 
-## 1. The Mystery: Why Did an $O(\log T)$ 2D Kalman Filter Slow Down 8× Between `T = 1k` and `T = 100k`?
+## 1. Why an $O(\log T)$ 2D Kalman Filter Slowed Down 8× Between `T = 1k` and `T = 100k`
 
 Särkkä & García-Fernández (IEEE TAC, 2020) showed that linear Gaussian Kalman filtering is an **exact associative monoid** over a 5-tuple $(A, b, C, \eta, J)$ representing the affine transition and backward information potential across any chronological time interval. Put those 5-tuples inside a persistent copy-on-write B+ tree (`FoldTree<M, B>`), and repairing a late sensor reading at tick `t = 33,333` out of `T = 100,000` takes $O(\log T)$ combines instead of $O(T)$ sequential replay.
 
@@ -41,24 +41,60 @@ Flushing entries below `1e-290` to exact `0.0` at the end of `KalmanFilter2D::co
 |---|---:|---:|---:|
 | v0: Dynamic `Vec<f64>` `KalmanMonoid` | `29.00 µs` | `76.7×` | `3.05e-16` |
 | v1: Stack-only `KalmanFilter2D` (0 heap allocs) | `12.80 µs` | `171.6×` | `2.36e-16` |
-| **v2: Subnormal flush (`< 1e-290 → 0.0`) + `B = 4`** | **`2.67 µs`** | **`847.4×`** | **`3.05e-16`** |
-| **v2 at `T = 500,000`** | **`2.91 µs`** | **`4,297.2×`** | **`1.67e-16`** |
-
-And from Python (`backfold.KalmanStream(dim=2)`), repairing tick `33,333` out of `100,000` takes **`8.72 µs`** vs. `4.47 seconds` in sequential NumPy (**512,577× faster**, `max |diff| = 9.09e-13`).
+| **v2: Subnormal flush (`< 1e-290 → 0.0`) + `B = 4`** | **`2.67–3.03 µs`** | **`719–847×`** | **`1.11e-16`** |
+| **v2 at `T = 500,000`** | **`3.34 µs`** | **`3,260×`** | **`2.78e-16`** |
 
 ---
 
-## 2. Why Standard Chan–Pébay Variance Still Loses Digits at `1e12 + N(0, 1)`
+## 2. Exact $O(\log T)$ RTS Bayesian Smoothing & Why Naive Associative Marginal Log-Likelihood Loses 6+ Digits
 
-Everyone knows naive $\frac{1}{n}\sum x_i^2 - \bar{x}^2$ suffers catastrophic cancellation on high-offset streams like Unix-microsecond timestamps or `1e12 + N(0, 1)`. Centered Pébay (2008) / Chan–Golub–LeVeque parallel merging is much better — **until you check variance error at `1e12` to `<1e-10`!**
+Because `FoldTree<KalmanFilter2D, 4>` already maintains both the forward transition $(A, b, C)$ and the backward information potential $(\eta, J)$ on every internal node, we realized in `v0.2.0` that **exact Rauch–Tung–Striebel (RTS) Bayesian smoothing** $p(x_t \mid y_{1:T})$ requires **ZERO backward sweep** and **ZERO stored filter checkpoints**:
+
+1. Query `left = tree.prefix(t)` in $O(\log T)$ → exact filtered posterior $\mathcal{N}(m_t^f, P_t^f) = p(x_t \mid y_{1:t})$.
+2. Query `right = tree.suffix(t + 1)` in $O(\log T)$ → exact backward likelihood potential $\ell(x_t) = p(y_{t+1:T} \mid x_t)$.
+3. Fuse in $O(d^3)$ via $D = (I + P_t^f J_{\text{future}})^{-1}$ → exact RTS smoothed posterior $p(x_t \mid y_{1:T})$!
+
+We also added exact associative **marginal log-likelihood** $\log p(y_{1:T})$ (`log_z`) so Bayesian model evidence updates in $O(\log T)$ after any late arrival or retraction.
+
+### The Trap: Catastrophic $O(y^2 / S)$ Cancellation in Uncentered `log_z`
+
+In standard canonical form, a single observation leaf stores $\log \ell(x_0) = \text{log\_z} + \eta^\top x_0 - \frac{1}{2} x_0^\top J x_0$ centered at the **arbitrary origin $x_0 = 0$**, so $\text{log\_z}_{\text{leaf}} = -\frac{1}{2}(\ln 2\pi + \ln S + y^2 / S)$.
+
+On a 100,000-tick drifting random walk where $y_t$ reaches `~5,000` (with $S \approx 0.25$), every single leaf carries $\text{log\_z} \approx -5 \times 10^7$. When two blocks combine, `e1.log_z + e2.log_z` ($\approx -10^8$) cancels against $+\frac{1}{2}\text{quad}$ ($\approx +10^8$) down to $O(1)$! Across 50,000 merges, each losing `ulp(5e7) ≈ 7.5e-9`, relative error ballooned to **`2.86e-9`** (`abs_err = 2.54e-4`), and on a `1e6`-offset satellite/price trajectory ($y^2 / S \approx 4 \times 10^{12}$), uncentered `log_z` loses nearly **all 16 digits**!
+
+### The Breakthrough: Anchor-Centered Associative Gaussian Potentials
+
+Instead of evaluating $\log \ell(x_0)$ at $x_0 = 0$, attach a 16-byte input-state **anchor** $r \in \mathbb{R}^d$ to every monoid element:
+
+$$x_{\text{end}} \mid x_0 \sim \mathcal{N}\!\bigl(A (x_0 - r) + b,\; C\bigr), \qquad \log \ell(x_0) = \tilde{z} + \tilde{\eta}^\top (x_0 - r) - \frac{1}{2} (x_0 - r)^\top J (x_0 - r)$$
+
+For any scalar observation leaf with $g = F^\top h$, choose a coordinate-aligned anchor $r$ on the hyperplane $g^\top r = y$ (e.g., $r = [y / g_0, 0]$):
+- $\tilde{z}_{\text{leaf}} = -\frac{1}{2}(\ln 2\pi + \ln S)$ — **ZERO $y^2/S$ term!**
+- $\tilde{\eta}_{\text{leaf}} = 0$ and $b_{\text{leaf}} = F r$!
+- When combining `e1` and `e2`, define the $O(1)$ discrepancy $\delta = b_1 - r_2$. Every combine equation is algebraically identical with $b_1$ replaced by $\delta$ and output anchor $r_{12} = r_1$ — **100% cancellation-free**!
+- Even RTS `smooth_fusion` becomes strictly better conditioned: $m_{\text{smooth}} = m_f + D P_f (\tilde{\eta} + J(r - m_f))$ computes an $O(1)$ update instead of multiplying $D$ by a huge state vector.
+
+**Verified live before/after on `T = 100,000` drifting 2D CV Kalman (`y ~ 5,000`):**
+
+| Method | RTS Mean Error | RTS Cov Error | `log p(y)` Rel Error | Latency (`T=100k` Py / `T=500k` Rust) |
+|---|---:|---:|---:|---|
+| Uncentered canonical `log_z` | `9.09e-13` | `1.35e-16` | `2.86e-9` *(fails `1e-9` gate!)* | — |
+| **Anchor-Centered Gaussian Potential (`v0.2.0`)** | **`9.09e-13`** | **`1.35e-16`** | **`1.14e-15`** *(**2.5M× better!**)* | **`12.45 µs` Py (`533,197×` NumPy RTS) · `6.52 µs` Rust (`3,109×` seq RTS)** |
+| **`1e6` offset trajectory (`T = 10k`, `y ~ 1,000,000`)** | **`2.61e-11`** | **`1.42e-16`** | **`1.04e-12`** | Exact even at $10^6$ offset |
+
+---
+
+## 3. Why Standard Chan–Pébay Variance & Covariance Still Lose Digits at `1e12 + N(0, 1)`
+
+Everyone knows naive $\frac{1}{n}\sum x_i^2 - \bar{x}^2$ suffers catastrophic cancellation on high-offset streams like Unix-microsecond timestamps or `1e12 + N(0, 1)`. Centered Pébay (2008) / Chan–Golub–LeVeque parallel merging is much better — **until you check variance or covariance error at `1e12` to `<1e-10`!**
 
 Because `1e12 ≈ 2^40`, an IEEE-754 `f64` only has 13 bits below the binary point (`ulp(1e12) ≈ 1.22e-4`). Storing `mean` as a single `f64` throws away the sub-ULP fractional part of every subtree mean before computing `delta = b.mean - a.mean`.
 
-Adding a single 8-byte **Knuth TwoSum** compensation term (`mean_lo: f64`) gives **106-bit effective mean precision** inside [`MomentsMonoid`](../crates/backfold-core/src/ops/moments.rs). Our adversarial Breaker test now verifies `< 1e-12` variance error on `1e12 + N(0, 1)` streams — even after inserting a `1e150` spike and retracting it.
+Adding a **Knuth TwoSum** error-compensation field (`mean_lo`) gives **106-bit effective mean precision** inside both [`MomentsMonoid`](../crates/backfold-core/src/ops/moments.rs) and [`CovarianceMonoid`](../crates/backfold-core/src/ops/covariance.rs). Our adversarial Breaker suite verifies `< 1e-11` variance, covariance, correlation, and Mahalanobis distance error on `1e12 + N(0, Σ)` streams — even after inserting a `1e150` spike and retracting it.
 
 ---
 
-## 3. Why Page e-CUSUM Breaks Multi-Stream e-BH (And the Associative Shiryaev–Roberts Semiring)
+## 4. Why Page e-CUSUM Breaks Multi-Stream e-BH (And the Associative Shiryaev–Roberts Semiring)
 
 Wang & Ramdas (2022) **e-BH** guarantees $\text{FDR} \le \alpha$ across $M$ streams under **arbitrary cross-stream dependence**, provided every stream supplies a valid **e-value** ($\mathbb{E}_0[e] \le 1$).
 
@@ -72,9 +108,9 @@ Combined with a composite-null margin (`singleton_z_composite(ts, z, null_margin
 
 ---
 
-## 4. Honest Crossover: When You Should NOT Use `backfold`
+## 5. Honest Crossover: When You Should NOT Use `backfold`
 
-If your stream is strictly append-only, strictly in-order, never retracts or edits past events, never runs arbitrary `[t1, t2]` range queries, and never branches counterfactual timelines, a plain sequential pass is faster on initial construction. On `MomentsMonoid`, bulk tree construction (`12.2 ms` @ `100k`, `53.7 ms` @ `500k`) breaks even against a single-pass `-O3` Rust loop (`0.32 ms` / `1.57 ms`) after **34–39 late edits or range queries**.
+If your stream is strictly append-only, strictly in-order, never retracts or edits past events, never runs arbitrary `[t1, t2]` range queries, and never branches counterfactual timelines, a plain sequential pass is faster on initial construction. On `MomentsMonoid`, bulk tree construction (`10.2 ms` @ `100k`, `47.9 ms` @ `500k`) breaks even against a single-pass `-O3` Rust loop (`0.30 ms` / `1.56 ms`) after **31–34 late edits or range queries**.
 
 Reproduce every number in this post locally in <10 seconds:
 ```sh

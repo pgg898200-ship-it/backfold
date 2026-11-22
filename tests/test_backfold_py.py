@@ -210,3 +210,107 @@ def test_digest_stream_catches_burst_and_compresses() -> None:
     assert dig["first_alarm_ts"] is not None and 4198 <= dig["first_alarm_ts"] <= 4210
     assert any(w["t_start"] <= 4202 <= w["t_end"] for w in dig["hotspots"])
     assert "# Stream Digest:" in dig["markdown"]
+
+
+def test_kalman_rts_smoother_and_marginal_log_likelihood() -> None:
+    from benchmarks.oracles import oracle_kalman_rts_cv_numpy
+
+    rng = np.random.default_rng(808)
+    n = 120
+    ts = np.arange(n, dtype=np.int64)
+    dts = rng.uniform(0.3, 1.8, size=n)
+    ys = np.cumsum(rng.normal(0.08, 0.15, size=n)) + rng.normal(0.0, 0.4, size=n)
+    # Mark several missing observations
+    ys[17] = float("nan")
+    ys[63] = float("nan")
+    m0 = np.array([0.3, -0.1])
+    p0 = np.array([[5.0, 0.1], [0.1, 2.0]])
+
+    kf = bf.KalmanStream(dim=2)
+    for t, dt, y in zip(ts.tolist(), dts.tolist(), ys.tolist()):
+        if math.isnan(y):
+            f_miss = [1.0, dt, 0.0, 1.0]
+            q_miss = [0.04 * dt**3 / 3.0, 0.04 * dt**2 / 2.0, 0.04 * dt**2 / 2.0, 0.04 * dt]
+            kf.upsert_missing(t, f_miss, q_miss)
+        else:
+            kf.upsert_constant_velocity(t, y, dt, 0.04, 0.35)
+
+    # Late edit at t = 40
+    ys[40] += 3.5
+    kf.upsert_constant_velocity(40, float(ys[40]), float(dts[40]), 0.04, 0.35)
+
+    m0_l = m0.tolist()
+    p0_l = p0.ravel().tolist()
+    got_ll = kf.log_marginal_likelihood(m0_l, p0_l)
+
+    query_pts = [0, 17, 40, 60, 63, 119]
+    batch_means, batch_covs = kf.smooth_many(np.array(query_pts, dtype=np.int64), m0_l, p0_l)
+    for idx, q in enumerate(query_pts):
+        om, op, oll = oracle_kalman_rts_cv_numpy(dts, ys, 0.04, 0.35, m0, p0, q)
+        if idx == 0:
+            assert abs(got_ll - oll) < 1e-10
+        sm_m, sm_p = kf.smooth_at(q, m0_l, p0_l)
+        assert np.max(np.abs(np.array(sm_m) - om)) < 1e-10
+        assert np.max(np.abs(np.array(sm_p).reshape(2, 2) - op)) < 1e-10
+        assert np.max(np.abs(np.array(batch_means[idx]) - om)) < 1e-10
+        assert np.max(np.abs(np.array(batch_covs[idx]).reshape(2, 2) - op)) < 1e-10
+
+    # Range marginal log-likelihood on a sub-window [20, 79]
+    sub_ll = kf.range_log_marginal_likelihood(20, 79, m0_l, p0_l)
+    _, _, sub_oll = oracle_kalman_rts_cv_numpy(
+        dts[20:80], ys[20:80], 0.04, 0.35, m0, p0, 59
+    )
+    assert abs(sub_ll - sub_oll) < 1e-10
+
+
+def test_covariance_stream_high_offset_range_and_mahalanobis() -> None:
+    from benchmarks.oracles import oracle_covariance_numpy
+
+    rng = np.random.default_rng(909)
+    base = 1e12
+    for dim in (5, 10):
+        n = 300
+        ts = np.arange(n, dtype=np.int64)
+        centered = rng.normal(0.0, 2.0, size=(n, dim))
+        centered[:, 1] = 0.8 * centered[:, 0] + 0.4 * centered[:, 1]
+        xmat = base + centered
+        exact_centered = xmat - base
+
+        cs = bf.CovarianceStream(dim=dim)
+        cs.ingest(ts, xmat)
+        assert len(cs) == n
+
+        got_cov = np.array(cs.covariance(ddof=1))
+        ref_cov = oracle_covariance_numpy(exact_centered, ddof=1)
+        assert np.max(np.abs(got_cov - ref_cov)) < 1e-10
+
+        got_corr = np.array(cs.correlation())
+        ref_corr = np.corrcoef(exact_centered, rowvar=False)
+        assert np.max(np.abs(got_corr - ref_corr)) < 1e-10
+
+        # Range query [50, 200]
+        got_rcov = np.array(cs.range_covariance(50, 200, ddof=1))
+        ref_rcov = oracle_covariance_numpy(exact_centered[50:201], ddof=1)
+        assert np.max(np.abs(got_rcov - ref_rcov)) < 1e-10
+
+        # Fork + spike + retract isolation
+        branch = cs.fork()
+        branch.upsert(120, [base + 1e6] * dim)
+        assert np.max(np.abs(np.array(cs.covariance(1)) - ref_cov)) < 1e-10
+        assert branch.retract(120) is True
+        branch.upsert(120, xmat[120].tolist())
+        assert np.max(np.abs(np.array(branch.covariance(1)) - ref_cov)) < 1e-10
+
+        # Single vs batch Mahalanobis parity + outlier discrimination
+        qmat = base + rng.normal(0.0, 2.0, size=(8, dim))
+        qmat[-1] = base + 40.0
+        batch = cs.mahalanobis_many(qmat, ridge_eps=1e-5)
+        for i in range(8):
+            single = cs.mahalanobis_sq(qmat[i].tolist(), ridge_eps=1e-5)
+            assert abs(single - batch[i]) < 1e-11
+        assert batch[-1] > 100.0
+
+    cs_err = bf.CovarianceStream(dim=3)
+    with pytest.raises(ValueError):
+        cs_err.upsert(0, [1.0, float("nan"), 2.0])
+

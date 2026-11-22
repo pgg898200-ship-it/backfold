@@ -2,6 +2,7 @@
 
 from backfold._backfold import (
     BitemporalMoments,
+    CovarianceStream,
     CusumStream,
     EProcessStream,
     EwmaStream,
@@ -17,6 +18,7 @@ from backfold._backfold import (
 
 __all__ = [
     "BitemporalMoments",
+    "CovarianceStream",
     "CusumStream",
     "EProcessStream",
     "EwmaStream",

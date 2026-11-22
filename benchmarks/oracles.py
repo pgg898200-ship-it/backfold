@@ -270,3 +270,83 @@ def baseline_linear_river(xs: np.ndarray, ys: np.ndarray, l2: float = 1e-2) -> l
     for row, y in zip(xs.tolist(), ys.tolist()):
         model.learn_one(dict(zip(keys, row)), float(y))
     return [float(model.weights.get(k, 0.0)) for k in keys]
+
+
+# ---------------------------------------------------------------------------
+# 7. Exact Rauch-Tung-Striebel (1965) Forward-Backward Smoother + Log-Likelihood
+# ---------------------------------------------------------------------------
+
+
+def oracle_kalman_rts_cv_numpy(
+    dts: np.ndarray,
+    ys: np.ndarray,
+    q_accel: float,
+    r_obs: float,
+    m0: np.ndarray,
+    p0: np.ndarray,
+    query_idx: int,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Textbook forward Kalman filter + backward RTS smoother at 0-based `query_idx`,
+    plus exact sequential innovation marginal log-likelihood `log p(y_{1:T})`."""
+    ln_tau = math.log(2.0 * math.pi)
+    n = int(ys.shape[0])
+    m = m0.astype(np.float64).copy()
+    p = p0.astype(np.float64).copy()
+    h = np.array([1.0, 0.0], dtype=np.float64)
+    eye = np.eye(2, dtype=np.float64)
+
+    keep = n - query_idx
+    m_filt = [None] * keep
+    p_filt = [None] * keep
+    m_pred = [None] * keep
+    p_pred = [None] * keep
+    fs = [None] * keep
+    log_lik = 0.0
+
+    for k, (dt, y) in enumerate(zip(dts.tolist(), ys.tolist())):
+        f = np.array([[1.0, dt], [0.0, 1.0]], dtype=np.float64)
+        q = q_accel * np.array(
+            [[dt**3 / 3.0, dt**2 / 2.0], [dt**2 / 2.0, dt]], dtype=np.float64
+        )
+        mp = f @ m
+        pp = f @ p @ f.T + q
+        if not math.isnan(y):
+            s = float(h @ pp @ h + r_obs)
+            innov = y - float(h @ mp)
+            log_lik += -0.5 * (ln_tau + math.log(s) + (innov * innov) / s)
+            kg = (pp @ h) / s
+            m = mp + kg * innov
+            ikh = eye - np.outer(kg, h)
+            p = ikh @ pp @ ikh.T + np.outer(kg, kg) * r_obs
+            p = 0.5 * (p + p.T)
+        else:
+            m, p = mp, pp
+        if k >= query_idx:
+            idx = k - query_idx
+            fs[idx] = f
+            m_pred[idx] = mp
+            p_pred[idx] = pp
+            m_filt[idx] = m
+            p_filt[idx] = p
+
+    ms = m_filt[-1].copy()
+    ps = p_filt[-1].copy()
+    for idx in range(keep - 2, -1, -1):
+        pf = p_filt[idx]
+        pp_next = p_pred[idx + 1]
+        f_next = fs[idx + 1]
+        g = pf @ f_next.T @ np.linalg.inv(pp_next)
+        ms = m_filt[idx] + g @ (ms - m_pred[idx + 1])
+        ps = pf + g @ (ps - pp_next) @ g.T
+        ps = 0.5 * (ps + ps.T)
+    return ms, ps, log_lik
+
+
+# ---------------------------------------------------------------------------
+# 8. Multivariate Streaming Covariance & Correlation
+# ---------------------------------------------------------------------------
+
+
+def oracle_covariance_numpy(xmat: np.ndarray, ddof: int = 1) -> np.ndarray:
+    return np.cov(xmat, rowvar=False, ddof=ddof)
+
