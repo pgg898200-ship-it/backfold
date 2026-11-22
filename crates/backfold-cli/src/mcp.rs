@@ -299,7 +299,7 @@ fn call_drill_csv(args: &Value) -> Result<String, String> {
     );
     let total = rows.len();
     for (k, m) in rows.into_iter().take(max_rows) {
-        out.push_str(&format!("{},{:.6}\n", k.event_time, m.mean));
+        out.push_str(&format!("{},{:?}\n", k.event_time, m.mean));
     }
     if total > max_rows {
         out.push_str(&format!(
