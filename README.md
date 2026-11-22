@@ -61,7 +61,7 @@ claude mcp add --transport stdio --scope local backfold -- "$PWD/target/release/
 claude mcp get backfold
 ```
 
-A successful check reports `Connected`. Try asking Claude to read rows 1 and 2 from the [four-row CSV](integrations/mcpb/README.md) with `backfold_drill_csv`. The observations are 25 and 42.
+A successful check reports `Connected`. Try asking Claude to inspect timestamps 1 through 2 in the [four-row CSV](integrations/mcpb/README.md) with `backfold_drill_csv`. The observations are 25 and 42.
 
 For manual MCP configuration, set the command to the absolute path of that executable and the arguments to `["mcp"]`. The server uses standard input and output. Start with `backfold_digest_csv` for a summary and `backfold_drill_csv` for the underlying rows. The reference includes the tools for Kalman smoothing, covariance and channel screening. [Agent guide](llms.txt) · [API reference](llms-full.txt) · [Coding-agent skill](skills/backfold/SKILL.md)
 
