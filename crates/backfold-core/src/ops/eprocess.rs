@@ -356,6 +356,96 @@ pub fn ebh_reject(e_values: &[f64], alpha: f64) -> Vec<usize> {
     out
 }
 
+/// Result of batch multi-stream anytime-valid e-BH FDR sifting across `n_streams` channels.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct SiftResult {
+    pub rejected_indices: Vec<usize>,
+    pub e_values: Vec<f64>,
+    pub baselines: Vec<(f64, f64)>,
+}
+
+/// Ultra-fast pure-Rust batch multi-stream FDR sifter across `n_streams` row-major channels
+/// (`streams_flat.len() == n_streams * t_len`).
+///
+/// For each channel:
+/// 1. Calibrates strictly causal `(median, mad_sigma)` on the first `warmup` ticks.
+/// 2. Standardizes post-warmup ticks `z = (x - med) / mad_sigma` and accumulates exact
+///    composite-null `EProcessMonoid` (`wealth + sr_evalue + scan_evalue`).
+/// 3. Applies Wang-Ramdas `ebh_reject(alpha)` guaranteeing `FDR <= alpha` under arbitrary
+///    cross-stream dependence and heavy-tailed noise.
+pub fn sift_streams_fdr(
+    streams_flat: &[f64],
+    n_streams: usize,
+    t_len: usize,
+    warmup: usize,
+    alpha: f64,
+    null_margin: f64,
+) -> Result<SiftResult, BackfoldError> {
+    if streams_flat.len() != n_streams.saturating_mul(t_len) {
+        return Err(BackfoldError::DimensionMismatch {
+            expected: n_streams.saturating_mul(t_len),
+            got: streams_flat.len(),
+        });
+    }
+    let alpha = check_finite(alpha, "alpha")?;
+    let null_margin = check_finite(null_margin, "null_margin")?;
+    if !(0.0..=1.0).contains(&alpha) {
+        return Err(BackfoldError::InvalidParameter("alpha must lie in [0, 1]"));
+    }
+    if !(0.0..1.0).contains(&null_margin) {
+        return Err(BackfoldError::InvalidParameter("null_margin must lie in [0, 1)"));
+    }
+    let w = warmup.min(t_len);
+    let mut e_values = Vec::with_capacity(n_streams);
+    let mut baselines = Vec::with_capacity(n_streams);
+
+    for ch in 0..n_streams {
+        let row = &streams_flat[ch * t_len..(ch + 1) * t_len];
+        let (med, mad) = crate::digest::causal_robust_scale(&row[..w]);
+        baselines.push((med, mad));
+        let inv_mad = 1.0 / mad;
+        let post_len = t_len - w;
+        if post_len == 0 {
+            e_values.push(1.0);
+            continue;
+        }
+        let mut cum_log_w = [0.0f64; 8];
+        let mut sr_suff_log = [f64::NEG_INFINITY; 8];
+        let mut sr_sub_log = [f64::NEG_INFINITY; 8];
+        for &x in &row[w..] {
+            let z = check_finite((x - med) * inv_mad, "z")?;
+            let g = (0.5 * z).tanh();
+            for k in 0..8 {
+                let lam = BETTING_GRID[k];
+                let g_adj = if lam > 0.0 {
+                    g - null_margin
+                } else {
+                    g + null_margin
+                };
+                let inc = (lam * g_adj).max(-0.999_999).ln_1p();
+                cum_log_w[k] += inc;
+                let suff = logaddexp(sr_suff_log[k] + inc, inc);
+                sr_suff_log[k] = suff;
+                sr_sub_log[k] = logaddexp(sr_sub_log[k], suff);
+            }
+        }
+        let nf = post_len as f64;
+        let wealth = logmeanexp8(&cum_log_w).min(700.0).exp();
+        let sr = (logmeanexp8(&sr_suff_log) - nf.ln()).min(700.0).exp();
+        let pairs = 0.5 * nf * (nf + 1.0);
+        let scan = (logmeanexp8(&sr_sub_log) - pairs.ln()).min(700.0).exp();
+        e_values.push((wealth + sr + scan) / 3.0);
+    }
+
+    let rejected_indices = ebh_reject(&e_values, alpha);
+    Ok(SiftResult {
+        rejected_indices,
+        e_values,
+        baselines,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +470,41 @@ mod tests {
         assert!((left.log_wealth() - right.log_wealth()).abs() < 1e-12);
         assert!((left.log_e_detector() - right.log_e_detector()).abs() < 1e-12);
         assert!(left.rejected(0.01));
+    }
+
+    #[test]
+    fn sift_streams_fdr_exact_parity_with_monoid() {
+        let n_streams = 24usize;
+        let t_len = 220usize;
+        let warmup = 100usize;
+        let mut flat = vec![0.0f64; n_streams * t_len];
+        let mut seed = 42u64;
+        for ch in 0..n_streams {
+            for t in 0..t_len {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let u = ((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5;
+                let mut v = u * 2.0;
+                if ch < 3 && t >= 130 {
+                    v += 2.2;
+                }
+                flat[ch * t_len + t] = v;
+            }
+        }
+        let res = sift_streams_fdr(&flat, n_streams, t_len, warmup, 0.05, 0.15).unwrap();
+        assert_eq!(res.rejected_indices, vec![0, 1, 2]);
+        for ch in 0..n_streams {
+            let row = &flat[ch * t_len..(ch + 1) * t_len];
+            let (med, mad) = res.baselines[ch];
+            let mut acc = EProcessMonoid::identity(&());
+            for (t, &x) in row.iter().enumerate().skip(warmup) {
+                let leaf =
+                    EProcessMonoid::singleton_z_composite(t as i64, (x - med) / mad, 0.15).unwrap();
+                acc = EProcessMonoid::combine(&acc, &leaf, &());
+            }
+            let expected = acc.e_value();
+            let rel = (res.e_values[ch] - expected).abs() / expected.abs().max(1.0);
+            assert!(rel < 1e-11, "ch={ch}: got={} expected={expected} rel={rel}", res.e_values[ch]);
+        }
     }
 
     #[test]

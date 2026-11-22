@@ -16,9 +16,13 @@
 
 use backfold_core::digest::{build_stream_digest, causal_robust_scale as core_robust_scale, StreamDigest};
 use backfold_core::ops::{
-    ebh_reject as core_ebh_reject, smooth_1d, smooth_2d, smooth_nd, CovarianceMonoid, CusumMonoid,
-    EProcessMonoid, EwmaMonoid, KalmanFilter1D, KalmanFilter2D, KalmanMonoid, MomentsMonoid,
-    RidgeMonoid, RidgeSolution,
+    changepoint_bayes_factor_1d, changepoint_bayes_factor_2d, changepoint_bayes_factor_nd,
+    changepoint_shock_bayes_factor_1d, changepoint_shock_bayes_factor_2d,
+    changepoint_shock_bayes_factor_nd, ebh_reject as core_ebh_reject, locate_changepoint_1d,
+    locate_changepoint_2d, sift_streams_fdr as core_sift_streams_fdr, smooth_1d, smooth_2d,
+    smooth_nd, CovarianceMonoid,
+    CovariancePca, CusumMonoid, EProcessMonoid, EwmaMonoid, KalmanFilter1D, KalmanFilter2D,
+    KalmanMonoid, MomentsMonoid, RidgeMonoid, RidgeSolution,
 };
 use backfold_core::swarm::{BitemporalFold, SwarmLedger};
 use backfold_core::{BackfoldError, EventKey, FoldTree};
@@ -83,6 +87,43 @@ fn extract_f64_mat(py: Python<'_>, obj: &Bound<'_, PyAny>, expected_dim: usize) 
         flat.extend_from_slice(&row);
     }
     Ok((flat, n))
+}
+
+/// Extract an arbitrary-shaped 2D row-major `f64` matrix (`n_rows x n_cols`).
+fn extract_f64_2d(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<(Vec<f64>, usize, usize)> {
+    if let Ok(buf) = PyBuffer::<f64>::get(obj) {
+        let shape = buf.shape();
+        if shape.len() == 2 {
+            if let Some(slice) = buf.as_slice(py) {
+                return Ok((slice.iter().map(|c| c.get()).collect(), shape[0], shape[1]));
+            }
+        }
+    }
+    let rows: Vec<Vec<f64>> = obj.extract()?;
+    let n_rows = rows.len();
+    let n_cols = rows.first().map_or(0, Vec::len);
+    let mut flat = Vec::with_capacity(n_rows * n_cols);
+    for row in rows {
+        if row.len() != n_cols {
+            return Err(PyValueError::new_err(format!(
+                "ragged 2D input: expected {n_cols} columns, got {}",
+                row.len()
+            )));
+        }
+        flat.extend_from_slice(&row);
+    }
+    Ok((flat, n_rows, n_cols))
+}
+
+fn pca_to_dict<'py>(py: Python<'py>, pca: &CovariancePca) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("dim", pca.dim)?;
+    d.set_item("k", pca.k)?;
+    d.set_item("eigenvalues", &pca.eigenvalues)?;
+    d.set_item("explained_variance_ratio", &pca.explained_variance_ratio)?;
+    let comp = flat_to_rows(&pca.components, pca.dim);
+    d.set_item("components", comp)?;
+    Ok(d)
 }
 
 fn moments_to_dict<'py>(py: Python<'py>, m: &MomentsMonoid) -> PyResult<Bound<'py, PyDict>> {
@@ -237,7 +278,7 @@ fn is_non_decreasing(ts: &[i64]) -> bool {
 #[pyclass]
 #[derive(Clone)]
 pub struct MomentsStream {
-    tree: FoldTree<MomentsMonoid, 16>,
+    tree: FoldTree<MomentsMonoid, 4>,
 }
 
 #[pymethods]
@@ -262,18 +303,20 @@ impl MomentsStream {
         if t_vec.len() != x_vec.len() {
             return Err(PyValueError::new_err("ts and xs must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(t_vec.len());
-        for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
-            let m = MomentsMonoid::singleton(t, x).map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t, source_id, 0), m));
-        }
-        if self.tree.is_empty() && sorted {
-            self.tree = FoldTree::from_sorted((), entries);
-        } else {
-            self.tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(t_vec.len());
+            for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
+                let m = MomentsMonoid::singleton(t, x).map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t, source_id, 0), m));
+            }
+            if self.tree.is_empty() && sorted {
+                self.tree = FoldTree::from_sorted((), entries);
+            } else {
+                self.tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, x, source_id = 0, seq = 0))]
@@ -329,7 +372,7 @@ impl MomentsStream {
 #[pyclass]
 #[derive(Clone)]
 pub struct EwmaStream {
-    tree: FoldTree<EwmaMonoid, 16>,
+    tree: FoldTree<EwmaMonoid, 4>,
 }
 
 #[pymethods]
@@ -374,19 +417,21 @@ impl EwmaStream {
         if t_vec.len() != x_vec.len() {
             return Err(PyValueError::new_err("ts and xs must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(t_vec.len());
-        for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
-            let m = EwmaMonoid::singleton(t, x).map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t, source_id, 0), m));
-        }
-        if self.tree.is_empty() && sorted {
-            let ctx = *self.tree.ctx();
-            self.tree = FoldTree::from_sorted(ctx, entries);
-        } else {
-            self.tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(t_vec.len());
+            for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
+                let m = EwmaMonoid::singleton(t, x).map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t, source_id, 0), m));
+            }
+            if self.tree.is_empty() && sorted {
+                let ctx = *self.tree.ctx();
+                self.tree = FoldTree::from_sorted(ctx, entries);
+            } else {
+                self.tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, x, source_id = 0, seq = 0))]
@@ -437,7 +482,7 @@ impl EwmaStream {
 #[pyclass]
 #[derive(Clone)]
 pub struct CusumStream {
-    tree: FoldTree<CusumMonoid, 16>,
+    tree: FoldTree<CusumMonoid, 4>,
     mu0: f64,
     sigma0: f64,
     slack_k: f64,
@@ -478,19 +523,21 @@ impl CusumStream {
         if t_vec.len() != x_vec.len() {
             return Err(PyValueError::new_err("ts and xs must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(t_vec.len());
-        for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
-            let m = CusumMonoid::singleton(t, x, self.mu0, self.sigma0, self.slack_k)
-                .map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t, source_id, 0), m));
-        }
-        if self.tree.is_empty() && sorted {
-            self.tree = FoldTree::from_sorted((), entries);
-        } else {
-            self.tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(t_vec.len());
+            for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
+                let m = CusumMonoid::singleton(t, x, self.mu0, self.sigma0, self.slack_k)
+                    .map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t, source_id, 0), m));
+            }
+            if self.tree.is_empty() && sorted {
+                self.tree = FoldTree::from_sorted((), entries);
+            } else {
+                self.tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, x, source_id = 0, seq = 0))]
@@ -576,7 +623,7 @@ impl CusumStream {
 #[pyclass]
 #[derive(Clone)]
 pub struct EProcessStream {
-    tree: FoldTree<EProcessMonoid, 16>,
+    tree: FoldTree<EProcessMonoid, 4>,
 }
 
 #[pymethods]
@@ -602,18 +649,21 @@ impl EProcessStream {
         if t_vec.len() != z_vec.len() {
             return Err(PyValueError::new_err("ts and zs must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(t_vec.len());
-        for (&t, &z) in t_vec.iter().zip(z_vec.iter()) {
-            let m = EProcessMonoid::singleton_z_composite(t, z, null_margin).map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t, source_id, 0), m));
-        }
-        if self.tree.is_empty() && sorted {
-            self.tree = FoldTree::from_sorted((), entries);
-        } else {
-            self.tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(t_vec.len());
+            for (&t, &z) in t_vec.iter().zip(z_vec.iter()) {
+                let m =
+                    EProcessMonoid::singleton_z_composite(t, z, null_margin).map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t, source_id, 0), m));
+            }
+            if self.tree.is_empty() && sorted {
+                self.tree = FoldTree::from_sorted((), entries);
+            } else {
+                self.tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, xs, mu0, source_id = 0))]
@@ -630,18 +680,20 @@ impl EProcessStream {
         if t_vec.len() != x_vec.len() {
             return Err(PyValueError::new_err("ts and xs must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(t_vec.len());
-        for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
-            let m = EProcessMonoid::singleton_bounded(t, x, mu0).map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t, source_id, 0), m));
-        }
-        if self.tree.is_empty() && sorted {
-            self.tree = FoldTree::from_sorted((), entries);
-        } else {
-            self.tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(t_vec.len());
+            for (&t, &x) in t_vec.iter().zip(x_vec.iter()) {
+                let m = EProcessMonoid::singleton_bounded(t, x, mu0).map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t, source_id, 0), m));
+            }
+            if self.tree.is_empty() && sorted {
+                self.tree = FoldTree::from_sorted((), entries);
+            } else {
+                self.tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, z, null_margin = 0.0, source_id = 0, seq = 0))]
@@ -734,7 +786,7 @@ impl EProcessStream {
 
 #[derive(Clone)]
 enum KalmanInner {
-    D1(FoldTree<KalmanFilter1D, 16>),
+    D1(FoldTree<KalmanFilter1D, 4>),
     D2(FoldTree<KalmanFilter2D, 4>),
     General(FoldTree<KalmanMonoid, 4>),
 }
@@ -782,19 +834,21 @@ impl KalmanStream {
         if t_vec.len() != y_vec.len() || t_vec.len() != dt_vec.len() {
             return Err(PyValueError::new_err("ts, ys, and dts must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(t_vec.len());
-        for i in 0..t_vec.len() {
-            let m = KalmanFilter2D::from_constant_velocity(dt_vec[i], q_accel, r_obs, y_vec[i])
-                .map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
-        }
-        if tree.is_empty() && sorted {
-            *tree = FoldTree::from_sorted((), entries);
-        } else {
-            tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(t_vec.len());
+            for i in 0..t_vec.len() {
+                let m = KalmanFilter2D::from_constant_velocity(dt_vec[i], q_accel, r_obs, y_vec[i])
+                    .map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
+            }
+            if tree.is_empty() && sorted {
+                *tree = FoldTree::from_sorted((), entries);
+            } else {
+                tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, ys, dts, q_rate, r_obs, source_id = 0))]
@@ -817,19 +871,21 @@ impl KalmanStream {
         if t_vec.len() != y_vec.len() || t_vec.len() != dt_vec.len() {
             return Err(PyValueError::new_err("ts, ys, and dts must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(t_vec.len());
-        for i in 0..t_vec.len() {
-            let m = KalmanFilter1D::from_random_walk(dt_vec[i], q_rate, r_obs, y_vec[i])
-                .map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
-        }
-        if tree.is_empty() && sorted {
-            *tree = FoldTree::from_sorted((), entries);
-        } else {
-            tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(t_vec.len());
+            for i in 0..t_vec.len() {
+                let m = KalmanFilter1D::from_random_walk(dt_vec[i], q_rate, r_obs, y_vec[i])
+                    .map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
+            }
+            if tree.is_empty() && sorted {
+                *tree = FoldTree::from_sorted((), entries);
+            } else {
+                tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, y, dt, q_accel, r_obs, source_id = 0, seq = 0))]
@@ -1135,7 +1191,7 @@ impl KalmanStream {
         }
     }
 
-    /// Batch O(K log T) exact RTS smoothing at multiple query timestamps `ts` in a single Rust loop.
+    /// Batch O(K log T) exact RTS smoothing at multiple query timestamps `ts` in a single Rust loop (GIL-free).
     fn smooth_many(
         &self,
         py: Python<'_>,
@@ -1144,40 +1200,42 @@ impl KalmanStream {
         p0: Vec<f64>,
     ) -> PyResult<SmoothBatch> {
         let t_vec = extract_i64_vec(py, ts)?;
-        let mut means = Vec::with_capacity(t_vec.len());
-        let mut covs = Vec::with_capacity(t_vec.len());
-        match &self.inner {
-            KalmanInner::D1(tree) => {
-                if m0.len() != 1 || p0.len() != 1 {
-                    return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+        py.allow_threads(|| {
+            let mut means = Vec::with_capacity(t_vec.len());
+            let mut covs = Vec::with_capacity(t_vec.len());
+            match &self.inner {
+                KalmanInner::D1(tree) => {
+                    if m0.len() != 1 || p0.len() != 1 {
+                        return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+                    }
+                    for t in t_vec {
+                        let (m, p) = smooth_1d(tree, t, m0[0], p0[0]).map_err(to_py_err)?;
+                        means.push(vec![m]);
+                        covs.push(vec![p]);
+                    }
                 }
-                for t in t_vec {
-                    let (m, p) = smooth_1d(tree, t, m0[0], p0[0]).map_err(to_py_err)?;
-                    means.push(vec![m]);
-                    covs.push(vec![p]);
+                KalmanInner::D2(tree) => {
+                    if m0.len() != 2 || p0.len() != 4 {
+                        return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
+                    }
+                    let m0a = [m0[0], m0[1]];
+                    let p0a = [p0[0], p0[1], p0[2], p0[3]];
+                    for t in t_vec {
+                        let (m, p) = smooth_2d(tree, t, m0a, p0a).map_err(to_py_err)?;
+                        means.push(m.to_vec());
+                        covs.push(p.to_vec());
+                    }
+                }
+                KalmanInner::General(tree) => {
+                    for t in t_vec {
+                        let post = smooth_nd(tree, t, &m0, &p0).map_err(to_py_err)?;
+                        means.push(post.mean);
+                        covs.push(post.cov);
+                    }
                 }
             }
-            KalmanInner::D2(tree) => {
-                if m0.len() != 2 || p0.len() != 4 {
-                    return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
-                }
-                let m0a = [m0[0], m0[1]];
-                let p0a = [p0[0], p0[1], p0[2], p0[3]];
-                for t in t_vec {
-                    let (m, p) = smooth_2d(tree, t, m0a, p0a).map_err(to_py_err)?;
-                    means.push(m.to_vec());
-                    covs.push(p.to_vec());
-                }
-            }
-            KalmanInner::General(tree) => {
-                for t in t_vec {
-                    let post = smooth_nd(tree, t, &m0, &p0).map_err(to_py_err)?;
-                    means.push(post.mean);
-                    covs.push(post.cov);
-                }
-            }
-        }
-        Ok((means, covs))
+            Ok((means, covs))
+        })
     }
 
     /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` in O(1) at the root.
@@ -1238,6 +1296,233 @@ impl KalmanStream {
                 .log_marginal_likelihood(&m0, &p0)
                 .map_err(to_py_err),
         }
+    }
+
+    /// Exact O(log T) Bayesian changepoint log-Bayes-factor at split timestamp `t`.
+    ///
+    /// If `q_jump` is `None`, tests a full state reset to `N(m0, P0)` (`log(p(y_{<=t})p(y_{>t})/p(y_{1:T}))`).
+    /// If `q_jump` is provided (length `dim * dim`), tests a translation-invariant instantaneous
+    /// state shock `N(m_f, P_f + Q_jump)` vs continuity `N(m_f, P_f)`.
+    #[pyo3(signature = (t, m0, p0, q_jump = None))]
+    fn changepoint_bayes_factor(
+        &self,
+        t: i64,
+        m0: Vec<f64>,
+        p0: Vec<f64>,
+        q_jump: Option<Vec<f64>>,
+    ) -> PyResult<f64> {
+        match (&self.inner, q_jump) {
+            (KalmanInner::D1(tree), None) => {
+                if m0.len() != 1 || p0.len() != 1 {
+                    return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+                }
+                changepoint_bayes_factor_1d(tree, t, m0[0], p0[0]).map_err(to_py_err)
+            }
+            (KalmanInner::D1(tree), Some(qj)) => {
+                if m0.len() != 1 || p0.len() != 1 || qj.len() != 1 {
+                    return Err(PyValueError::new_err("expected len(m0)=len(p0)=len(q_jump)=1"));
+                }
+                changepoint_shock_bayes_factor_1d(tree, t, m0[0], p0[0], qj[0]).map_err(to_py_err)
+            }
+            (KalmanInner::D2(tree), None) => {
+                if m0.len() != 2 || p0.len() != 4 {
+                    return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
+                }
+                changepoint_bayes_factor_2d(
+                    tree,
+                    t,
+                    [m0[0], m0[1]],
+                    [p0[0], p0[1], p0[2], p0[3]],
+                )
+                .map_err(to_py_err)
+            }
+            (KalmanInner::D2(tree), Some(qj)) => {
+                if m0.len() != 2 || p0.len() != 4 || qj.len() != 4 {
+                    return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=len(q_jump)=4"));
+                }
+                changepoint_shock_bayes_factor_2d(
+                    tree,
+                    t,
+                    [m0[0], m0[1]],
+                    [p0[0], p0[1], p0[2], p0[3]],
+                    [qj[0], qj[1], qj[2], qj[3]],
+                )
+                .map_err(to_py_err)
+            }
+            (KalmanInner::General(tree), None) => {
+                changepoint_bayes_factor_nd(tree, t, &m0, &p0).map_err(to_py_err)
+            }
+            (KalmanInner::General(tree), Some(qj)) => {
+                changepoint_shock_bayes_factor_nd(tree, t, &m0, &p0, &qj).map_err(to_py_err)
+            }
+        }
+    }
+
+    /// Batch O(K log T) GIL-free Bayesian changepoint scan across candidate split timestamps `ts`.
+    #[pyo3(signature = (ts, m0, p0, q_jump = None))]
+    fn scan_changepoints<'py>(
+        &self,
+        py: Python<'py>,
+        ts: &Bound<'_, PyAny>,
+        m0: Vec<f64>,
+        p0: Vec<f64>,
+        q_jump: Option<Vec<f64>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let t_vec = extract_i64_vec(py, ts)?;
+        let (best_ts, best_bf, bfs) = py.allow_threads(|| -> PyResult<(Option<i64>, f64, Vec<f64>)> {
+            let mut bfs = Vec::with_capacity(t_vec.len());
+            let mut best_ts = None;
+            let mut best_bf = f64::NEG_INFINITY;
+            match (&self.inner, q_jump.as_deref()) {
+                (KalmanInner::D1(tree), None) => {
+                    if m0.len() != 1 || p0.len() != 1 {
+                        return Err(PyValueError::new_err("expected len(m0)=1, len(p0)=1"));
+                    }
+                    for &t in &t_vec {
+                        let bf =
+                            changepoint_bayes_factor_1d(tree, t, m0[0], p0[0]).map_err(to_py_err)?;
+                        if bf > best_bf {
+                            best_bf = bf;
+                            best_ts = Some(t);
+                        }
+                        bfs.push(bf);
+                    }
+                }
+                (KalmanInner::D1(tree), Some(qj)) => {
+                    if m0.len() != 1 || p0.len() != 1 || qj.len() != 1 {
+                        return Err(PyValueError::new_err("expected len(m0)=len(p0)=len(q_jump)=1"));
+                    }
+                    for &t in &t_vec {
+                        let bf = changepoint_shock_bayes_factor_1d(tree, t, m0[0], p0[0], qj[0])
+                            .map_err(to_py_err)?;
+                        if bf > best_bf {
+                            best_bf = bf;
+                            best_ts = Some(t);
+                        }
+                        bfs.push(bf);
+                    }
+                }
+                (KalmanInner::D2(tree), None) => {
+                    if m0.len() != 2 || p0.len() != 4 {
+                        return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=4"));
+                    }
+                    let m0a = [m0[0], m0[1]];
+                    let p0a = [p0[0], p0[1], p0[2], p0[3]];
+                    for &t in &t_vec {
+                        let bf =
+                            changepoint_bayes_factor_2d(tree, t, m0a, p0a).map_err(to_py_err)?;
+                        if bf > best_bf {
+                            best_bf = bf;
+                            best_ts = Some(t);
+                        }
+                        bfs.push(bf);
+                    }
+                }
+                (KalmanInner::D2(tree), Some(qj)) => {
+                    if m0.len() != 2 || p0.len() != 4 || qj.len() != 4 {
+                        return Err(PyValueError::new_err("expected len(m0)=2, len(p0)=len(q_jump)=4"));
+                    }
+                    let m0a = [m0[0], m0[1]];
+                    let p0a = [p0[0], p0[1], p0[2], p0[3]];
+                    let qja = [qj[0], qj[1], qj[2], qj[3]];
+                    for &t in &t_vec {
+                        let bf = changepoint_shock_bayes_factor_2d(tree, t, m0a, p0a, qja)
+                            .map_err(to_py_err)?;
+                        if bf > best_bf {
+                            best_bf = bf;
+                            best_ts = Some(t);
+                        }
+                        bfs.push(bf);
+                    }
+                }
+                (KalmanInner::General(tree), None) => {
+                    for &t in &t_vec {
+                        let bf =
+                            changepoint_bayes_factor_nd(tree, t, &m0, &p0).map_err(to_py_err)?;
+                        if bf > best_bf {
+                            best_bf = bf;
+                            best_ts = Some(t);
+                        }
+                        bfs.push(bf);
+                    }
+                }
+                (KalmanInner::General(tree), Some(qj)) => {
+                    for &t in &t_vec {
+                        let bf = changepoint_shock_bayes_factor_nd(tree, t, &m0, &p0, qj)
+                            .map_err(to_py_err)?;
+                        if bf > best_bf {
+                            best_bf = bf;
+                            best_ts = Some(t);
+                        }
+                        bfs.push(bf);
+                    }
+                }
+            }
+            Ok((best_ts, if best_ts.is_some() { best_bf } else { 0.0 }, bfs))
+        })?;
+        let d = PyDict::new(py);
+        d.set_item("best_ts", best_ts)?;
+        d.set_item("best_log_bf", best_bf)?;
+        d.set_item("log_bfs", bfs)?;
+        Ok(d)
+    }
+
+    /// Zero-blind-spot O(log^2 T) GIL-free global Bayesian shock changepoint locator.
+    ///
+    /// Screens overlapping FoldTree segments by excess innovation NLL, zooms into top-3 regions,
+    /// and pinpoints the exact shock timestamp & log-Bayes-factor in sub-millisecond time.
+    #[pyo3(signature = (m0, p0, q_jump, n_windows = 64))]
+    fn locate_changepoint<'py>(
+        &self,
+        py: Python<'py>,
+        m0: Vec<f64>,
+        p0: Vec<f64>,
+        q_jump: Vec<f64>,
+        n_windows: usize,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let hit = py.allow_threads(|| -> PyResult<Option<(i64, f64)>> {
+            match &self.inner {
+                KalmanInner::D1(tree) => {
+                    if m0.len() != 1 || p0.len() != 1 || q_jump.len() != 1 {
+                        return Err(PyValueError::new_err(
+                            "expected len(m0)=len(p0)=len(q_jump)=1",
+                        ));
+                    }
+                    locate_changepoint_1d(tree, m0[0], p0[0], q_jump[0], n_windows)
+                        .map_err(to_py_err)
+                }
+                KalmanInner::D2(tree) => {
+                    if m0.len() != 2 || p0.len() != 4 || q_jump.len() != 4 {
+                        return Err(PyValueError::new_err(
+                            "expected len(m0)=2, len(p0)=len(q_jump)=4",
+                        ));
+                    }
+                    locate_changepoint_2d(
+                        tree,
+                        [m0[0], m0[1]],
+                        [p0[0], p0[1], p0[2], p0[3]],
+                        [q_jump[0], q_jump[1], q_jump[2], q_jump[3]],
+                        n_windows,
+                    )
+                    .map_err(to_py_err)
+                }
+                KalmanInner::General(_) => Err(PyValueError::new_err(
+                    "locate_changepoint is currently specialized for dim 1 and dim 2; use scan_changepoints for general dim",
+                )),
+            }
+        })?;
+        let d = PyDict::new(py);
+        match hit {
+            Some((t, bf)) => {
+                d.set_item("best_ts", Some(t))?;
+                d.set_item("best_log_bf", bf)?;
+            }
+            None => {
+                d.set_item("best_ts", None::<i64>)?;
+                d.set_item("best_log_bf", 0.0)?;
+            }
+        }
+        Ok(d)
     }
 
     fn fork(&self) -> Self {
@@ -1326,20 +1611,23 @@ impl RidgeStream {
         if t_vec.len() != n_rows || t_vec.len() != y_vec.len() {
             return Err(PyValueError::new_err("ts, xmat rows, and yvec must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(n_rows);
-        for i in 0..n_rows {
-            let row = &x_flat[i * self.dim..(i + 1) * self.dim];
-            let m = RidgeMonoid::singleton(t_vec[i], row, y_vec[i], 1.0).map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
-        }
-        if self.tree.is_empty() && sorted {
-            let ctx = *self.tree.ctx();
-            self.tree = FoldTree::from_sorted(ctx, entries);
-        } else {
-            self.tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(n_rows);
+            for i in 0..n_rows {
+                let row = &x_flat[i * self.dim..(i + 1) * self.dim];
+                let m =
+                    RidgeMonoid::singleton(t_vec[i], row, y_vec[i], 1.0).map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
+            }
+            if self.tree.is_empty() && sorted {
+                let ctx = *self.tree.ctx();
+                self.tree = FoldTree::from_sorted(ctx, entries);
+            } else {
+                self.tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, x, y, weight = 1.0, source_id = 0, seq = 0))]
@@ -1460,20 +1748,22 @@ impl CovarianceStream {
         if t_vec.len() != n_rows {
             return Err(PyValueError::new_err("ts and xmat rows must have equal length"));
         }
-        let sorted = is_non_decreasing(&t_vec);
-        let mut entries = Vec::with_capacity(n_rows);
-        for i in 0..n_rows {
-            let row = &x_flat[i * self.dim..(i + 1) * self.dim];
-            let m = CovarianceMonoid::singleton(t_vec[i], row).map_err(to_py_err)?;
-            entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
-        }
-        if self.tree.is_empty() && sorted {
-            let ctx = *self.tree.ctx();
-            self.tree = FoldTree::from_sorted(ctx, entries);
-        } else {
-            self.tree.upsert_batch(entries);
-        }
-        Ok(())
+        py.allow_threads(|| {
+            let sorted = is_non_decreasing(&t_vec);
+            let mut entries = Vec::with_capacity(n_rows);
+            for i in 0..n_rows {
+                let row = &x_flat[i * self.dim..(i + 1) * self.dim];
+                let m = CovarianceMonoid::singleton(t_vec[i], row).map_err(to_py_err)?;
+                entries.push((EventKey::sourced(t_vec[i], source_id, 0), m));
+            }
+            if self.tree.is_empty() && sorted {
+                let ctx = *self.tree.ctx();
+                self.tree = FoldTree::from_sorted(ctx, entries);
+            } else {
+                self.tree.upsert_batch(entries);
+            }
+            Ok(())
+        })
     }
 
     #[pyo3(signature = (ts, x, source_id = 0, seq = 0))]
@@ -1516,6 +1806,30 @@ impl CovarianceStream {
         flat_to_rows(&flat, self.dim)
     }
 
+    /// Exact cyclic-Jacobi PCA of the full compensated streaming covariance matrix (zero BLAS).
+    #[pyo3(signature = (ddof = 1, top_k = None))]
+    fn pca<'py>(&self, py: Python<'py>, ddof: u64, top_k: Option<usize>) -> PyResult<Bound<'py, PyDict>> {
+        let res = self.tree.summary().pca(ddof, top_k);
+        pca_to_dict(py, &res)
+    }
+
+    /// Exact O(log T + d^3) cyclic-Jacobi PCA over any time range `[t_start, t_end]`.
+    #[pyo3(signature = (t_start, t_end, ddof = 1, top_k = None))]
+    fn range_pca<'py>(
+        &self,
+        py: Python<'py>,
+        t_start: i64,
+        t_end: i64,
+        ddof: u64,
+        top_k: Option<usize>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let res = self
+            .tree
+            .range(EventKey::time_start(t_start), EventKey::time_end(t_end))
+            .pca(ddof, top_k);
+        pca_to_dict(py, &res)
+    }
+
     #[pyo3(signature = (x, ridge_eps = 1e-6))]
     fn mahalanobis_sq(&self, x: Vec<f64>, ridge_eps: f64) -> PyResult<f64> {
         self.tree
@@ -1532,10 +1846,12 @@ impl CovarianceStream {
         ridge_eps: f64,
     ) -> PyResult<Vec<f64>> {
         let (x_flat, _) = extract_f64_mat(py, xmat, self.dim)?;
-        self.tree
-            .summary()
-            .mahalanobis_sq_batch(&x_flat, ridge_eps)
-            .map_err(to_py_err)
+        py.allow_threads(|| {
+            self.tree
+                .summary()
+                .mahalanobis_sq_batch(&x_flat, ridge_eps)
+                .map_err(to_py_err)
+        })
     }
 
     #[pyo3(signature = (t_start, t_end, ddof = 1))]
@@ -1598,7 +1914,7 @@ impl CovarianceStream {
 #[pyclass]
 #[derive(Clone)]
 pub struct SwarmEProcessLedger {
-    inner: SwarmLedger<EProcessMonoid, 16>,
+    inner: SwarmLedger<EProcessMonoid, 4>,
 }
 
 #[pymethods]
@@ -1660,7 +1976,7 @@ impl SwarmEProcessLedger {
 #[pyclass]
 #[derive(Clone)]
 pub struct BitemporalMoments {
-    inner: BitemporalFold<MomentsMonoid, 16>,
+    inner: BitemporalFold<MomentsMonoid, 4>,
 }
 
 #[pymethods]
@@ -1740,8 +2056,33 @@ fn digest_stream<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let t_vec = extract_i64_vec(py, ts)?;
     let x_vec = extract_f64_vec(py, xs)?;
-    let dig = build_stream_digest(channel, &t_vec, &x_vec, top_k, threshold).map_err(to_py_err)?;
+    let ch = channel.to_string();
+    let dig = py
+        .allow_threads(|| build_stream_digest(&ch, &t_vec, &x_vec, top_k, threshold))
+        .map_err(to_py_err)?;
     digest_to_dict(py, &dig)
+}
+
+#[pyfunction]
+#[pyo3(signature = (channels_2d, warmup = 120, alpha = 0.05, null_margin = 0.15))]
+fn sift_streams<'py>(
+    py: Python<'py>,
+    channels_2d: &Bound<'_, PyAny>,
+    warmup: usize,
+    alpha: f64,
+    null_margin: f64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let (flat, n_streams, t_len) = extract_f64_2d(py, channels_2d)?;
+    let res = py
+        .allow_threads(|| {
+            core_sift_streams_fdr(&flat, n_streams, t_len, warmup, alpha, null_margin)
+        })
+        .map_err(to_py_err)?;
+    let d = PyDict::new(py);
+    d.set_item("rejected", res.rejected_indices)?;
+    d.set_item("e_values", res.e_values)?;
+    d.set_item("baselines", res.baselines)?;
+    Ok(d)
 }
 
 #[pyfunction]
@@ -1764,6 +2105,7 @@ fn _backfold(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BitemporalMoments>()?;
     m.add_function(wrap_pyfunction!(ebh_reject, m)?)?;
     m.add_function(wrap_pyfunction!(digest_stream, m)?)?;
+    m.add_function(wrap_pyfunction!(sift_streams, m)?)?;
     m.add_function(wrap_pyfunction!(causal_robust_scale, m)?)?;
     Ok(())
 }

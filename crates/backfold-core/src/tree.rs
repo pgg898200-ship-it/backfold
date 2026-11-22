@@ -41,7 +41,7 @@ impl<M: Monoid> Node<M> {
         let len = entries.len();
         let mut summary = entries[0].1.clone();
         for (_, v) in &entries[1..] {
-            summary = M::combine(&summary, v, ctx);
+            summary.combine_assign(v, ctx);
         }
         Self {
             summary,
@@ -60,7 +60,7 @@ impl<M: Monoid> Node<M> {
         let mut summary = children[0].summary.clone();
         for ch in &children[1..] {
             len += ch.len;
-            summary = M::combine(&summary, &ch.summary, ctx);
+            summary.combine_assign(&ch.summary, ctx);
         }
         Self {
             summary,
@@ -141,7 +141,7 @@ impl<M: Monoid> Node<M> {
                 }
                 let mut acc = entries[lo].1.clone();
                 for (_, v) in &entries[(lo + 1)..hi] {
-                    acc = M::combine(&acc, v, ctx);
+                    acc.combine_assign(v, ctx);
                 }
                 acc
             }
@@ -154,14 +154,50 @@ impl<M: Monoid> Node<M> {
                     }
                     let part = ch.range(start, end, ctx);
                     if !part.is_identity() {
-                        acc = if acc.is_identity() {
-                            part
+                        if acc.is_identity() {
+                            acc = part;
                         } else {
-                            M::combine(&acc, &part, ctx)
-                        };
+                            acc.combine_assign(&part, ctx);
+                        }
                     }
                 }
                 acc
+            }
+        }
+    }
+
+    /// Single-pass zero-allocation root-to-leaf walk computing BOTH `fold(<= split_key)` into `left`
+    /// and `fold(> split_key)` into `right` in exact chronological order.
+    fn split_summary_into(&self, split_key: EventKey, left: &mut M, right: &mut M, ctx: &M::Ctx) {
+        if split_key >= self.max_key {
+            left.combine_assign(&self.summary, ctx);
+            return;
+        }
+        if split_key < self.min_key {
+            right.combine_assign(&self.summary, ctx);
+            return;
+        }
+        match &self.kind {
+            NodeKind::Leaf { entries } => {
+                let split = entries.partition_point(|(k, _)| *k <= split_key);
+                for (_, v) in &entries[..split] {
+                    left.combine_assign(v, ctx);
+                }
+                for (_, v) in &entries[split..] {
+                    right.combine_assign(v, ctx);
+                }
+            }
+            NodeKind::Internal { children } => {
+                let idx = children.partition_point(|ch| ch.max_key <= split_key);
+                for ch in &children[..idx] {
+                    left.combine_assign(&ch.summary, ctx);
+                }
+                if idx < children.len() {
+                    children[idx].split_summary_into(split_key, left, right, ctx);
+                    for ch in &children[(idx + 1)..] {
+                        right.combine_assign(&ch.summary, ctx);
+                    }
+                }
             }
         }
     }
@@ -376,14 +412,14 @@ pub struct FoldTree<M: Monoid, const B: usize = 16> {
 impl<M: Monoid, const B: usize> FoldTree<M, B> {
     /// Create an empty tree with operator context `ctx`.
     pub fn new(ctx: M::Ctx) -> Self {
-        assert!(B >= 4, "FoldTree branching factor B must be >= 4");
+        assert!(B >= 2, "FoldTree branching factor B must be >= 2");
         Self { root: None, ctx }
     }
 
     /// True O(T) bottom-up bulk construction from keys sorted in non-decreasing `EventKey` order.
     /// Adjacent duplicate keys are deduplicated keeping the last value (matching `upsert` semantics).
     pub fn from_sorted(ctx: M::Ctx, mut entries: Vec<(EventKey, M)>) -> Self {
-        assert!(B >= 4, "FoldTree branching factor B must be >= 4");
+        assert!(B >= 2, "FoldTree branching factor B must be >= 2");
         if entries.is_empty() {
             return Self { root: None, ctx };
         }
@@ -472,6 +508,18 @@ impl<M: Monoid, const B: usize> FoldTree<M, B> {
     #[inline]
     pub fn depth(&self) -> usize {
         self.root.as_ref().map_or(0, |r| r.depth())
+    }
+
+    /// O(1) minimum `EventKey` currently stored in the tree.
+    #[inline]
+    pub fn min_key(&self) -> Option<EventKey> {
+        self.root.as_ref().map(|r| r.min_key)
+    }
+
+    /// O(1) maximum `EventKey` currently stored in the tree.
+    #[inline]
+    pub fn max_key(&self) -> Option<EventKey> {
+        self.root.as_ref().map(|r| r.max_key)
     }
 
     /// O(1) full-stream monoid summary.
@@ -583,6 +631,18 @@ impl<M: Monoid, const B: usize> FoldTree<M, B> {
         self.range(start, EventKey::MAX)
     }
 
+    /// Single-pass O(log T) split returning `(fold(<= split_key), fold(> split_key))` in one
+    /// root-to-leaf walk (halving cache misses for RTS smoothing and changepoint Bayes factors).
+    #[inline]
+    pub fn split_summary(&self, split_key: EventKey) -> (M, M) {
+        let mut left = M::identity(&self.ctx);
+        let mut right = M::identity(&self.ctx);
+        if let Some(root) = &self.root {
+            root.split_summary_into(split_key, &mut left, &mut right, &self.ctx);
+        }
+        (left, right)
+    }
+
     /// O(log T) fold over inclusive event-timestamp range `[t_start, t_end]`.
     #[inline]
     pub fn query_time_range(&self, t_start: i64, t_end: i64) -> M {
@@ -676,6 +736,60 @@ impl<M: Monoid, const B: usize> FoldTree<M, B> {
         results
     }
 
+    /// Zero-combine scan reading already-cached node summaries for subtrees of size `<= max_len`
+    /// (plus their immediate `<= 4 * max_len` parents so inter-subtree boundaries are never missed).
+    pub fn scan_cached_subtrees<S>(&self, max_len: usize, score: S) -> Vec<(EventKey, EventKey, usize, f64)>
+    where
+        S: Fn(&M, usize) -> f64,
+    {
+        fn walk<M: Monoid, S: Fn(&M, usize) -> f64>(
+            node: &Node<M>,
+            max_len: usize,
+            score: &S,
+            out: &mut Vec<(EventKey, EventKey, usize, f64)>,
+        ) {
+            let parent_cap = max_len.saturating_mul(4);
+            match &node.kind {
+                NodeKind::Leaf { .. } => {
+                    out.push((
+                        node.min_key,
+                        node.max_key,
+                        node.len,
+                        score(&node.summary, node.len),
+                    ));
+                }
+                NodeKind::Internal { children } => {
+                    if node.len <= max_len {
+                        out.push((
+                            node.min_key,
+                            node.max_key,
+                            node.len,
+                            score(&node.summary, node.len),
+                        ));
+                        return;
+                    }
+                    if node.len <= parent_cap {
+                        out.push((
+                            node.min_key,
+                            node.max_key,
+                            node.len,
+                            score(&node.summary, node.len),
+                        ));
+                    }
+                    for ch in children {
+                        walk(ch, max_len, score, out);
+                    }
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        if let Some(root) = &self.root {
+            walk(root, max_len.max(4), &score, &mut out);
+        }
+        out
+    }
+
     /// Conflict-free, idempotent CRDT union merge of two trees.
     ///
     /// - Fast-path O(1) when `Arc::ptr_eq` detects identical roots.
@@ -758,5 +872,45 @@ mod tests {
         }
         assert!(tree.is_empty());
         assert_eq!(tree.depth(), 0);
+    }
+
+    #[test]
+    fn split_summary_exact_for_b2_and_b16() {
+        let alpha = 0.15;
+        let n = 128usize;
+        let entries: Vec<_> = (0..n)
+            .map(|i| {
+                let x = ((i as f64) * 0.37).sin() * 5.0 + (i as f64) * 0.05;
+                (
+                    EventKey::at(i as i64),
+                    AffineEwmaMonoid::singleton(x, alpha).unwrap(),
+                )
+            })
+            .collect();
+        let mut t2: FoldTree<AffineEwmaMonoid, 2> = FoldTree::from_sorted((), entries.clone());
+        let t16: FoldTree<AffineEwmaMonoid, 16> = FoldTree::from_sorted((), entries);
+        // Upsert & retract on B=2 tree to exercise binary splits & merges
+        t2.upsert(
+            EventKey::at(40),
+            AffineEwmaMonoid::singleton(12.5, alpha).unwrap(),
+        );
+        t2.retract(EventKey::at(40));
+        let orig40 = ((40.0f64) * 0.37).sin() * 5.0 + 40.0 * 0.05;
+        t2.upsert(
+            EventKey::at(40),
+            AffineEwmaMonoid::singleton(orig40, alpha).unwrap(),
+        );
+        assert_eq!(t2.len(), n);
+        for split_t in [-1i64, 0, 1, 15, 16, 63, 64, 126, 127, 200] {
+            let key = EventKey::time_end(split_t);
+            let (l2, r2) = t2.split_summary(key);
+            let (l16, r16) = t16.split_summary(key);
+            let lp = t16.prefix(key);
+            let rs = t16.range(EventKey::time_start(split_t + 1), EventKey::MAX);
+            assert!((l2.apply(0.3) - lp.apply(0.3)).abs() < 1e-13);
+            assert!((r2.apply(0.3) - rs.apply(0.3)).abs() < 1e-13);
+            assert!((l16.apply(0.3) - lp.apply(0.3)).abs() < 1e-13);
+            assert!((r16.apply(0.3) - rs.apply(0.3)).abs() < 1e-13);
+        }
     }
 }

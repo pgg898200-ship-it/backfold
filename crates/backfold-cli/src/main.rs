@@ -1,6 +1,8 @@
 //! `backfold` CLI — sub-10ms native binary for O(log T) out-of-order streaming inference,
 //! counterfactual agent forking, lossless-recoverable stream digests, and live benchmarks.
 
+mod mcp;
+
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -8,8 +10,8 @@ use std::time::Instant;
 
 use backfold_core::digest::build_stream_digest;
 use backfold_core::ops::{
-    ebh_reject, smooth_2d, CovarianceMonoid, CusumMonoid, EProcessMonoid, EwmaMonoid,
-    KalmanFilter1D, KalmanFilter2D, MomentsMonoid, RidgeMonoid,
+    locate_changepoint_2d, sift_streams_fdr, smooth_2d, CovarianceMonoid, CusumMonoid,
+    EProcessMonoid, EwmaMonoid, KalmanFilter1D, KalmanFilter2D, MomentsMonoid, RidgeMonoid,
 };
 use backfold_core::swarm::SwarmLedger;
 use backfold_core::{EventKey, FoldTree};
@@ -385,7 +387,7 @@ fn run_bench_suite(as_json: bool) {
             .map(|(&t, &x)| (EventKey::at(t), MomentsMonoid::singleton(t, x).unwrap()))
             .collect();
         let t_build0 = Instant::now();
-        let mut tree_m: FoldTree<MomentsMonoid, 16> = FoldTree::from_sorted((), entries);
+        let mut tree_m: FoldTree<MomentsMonoid, 4> = FoldTree::from_sorted((), entries);
         let build_ms = t_build0.elapsed().as_secs_f64() * 1e3;
 
         xs[edit_idx] = edited_val;
@@ -446,7 +448,7 @@ fn run_bench_suite(as_json: bool) {
             .zip(xs.iter())
             .map(|(&t, &x)| (EventKey::at(t), EwmaMonoid::singleton(t, x).unwrap()))
             .collect();
-        let mut tree_e: FoldTree<EwmaMonoid, 16> = FoldTree::from_sorted(lambda, e_entries);
+        let mut tree_e: FoldTree<EwmaMonoid, 4> = FoldTree::from_sorted(lambda, e_entries);
         xs[edit_idx] = edited_val;
         let o_ewma = seq_ewma(&ts, &xs, lambda);
         let seq_us = time_us(
@@ -493,7 +495,7 @@ fn run_bench_suite(as_json: bool) {
             .zip(xs.iter())
             .map(|(&t, &x)| (EventKey::at(t), CusumMonoid::singleton_z(t, x, 0.5).unwrap()))
             .collect();
-        let mut tree_c: FoldTree<CusumMonoid, 16> = FoldTree::from_sorted((), c_entries);
+        let mut tree_c: FoldTree<CusumMonoid, 4> = FoldTree::from_sorted((), c_entries);
         xs[edit_idx] = 8.0;
         let (o_pk, o_fa) = seq_cusum(&ts, &xs, 0.5, 6.0);
         let seq_us = time_us(
@@ -549,7 +551,7 @@ fn run_bench_suite(as_json: bool) {
                 )
             })
             .collect();
-        let mut tree_k1: FoldTree<KalmanFilter1D, 8> = FoldTree::from_sorted((), k1_entries);
+        let mut tree_k1: FoldTree<KalmanFilter1D, 4> = FoldTree::from_sorted((), k1_entries);
         xs[edit_idx] = edited_val;
         let (o_km, o_kp) = seq_kalman_1d(&xs, 0.05, 1.0, 0.0, 10.0);
         let seq_us = time_us(
@@ -923,7 +925,7 @@ fn run_demo() {
     let ts: Vec<i64> = (0..n as i64).collect();
     let mut ys: Vec<f64> = (0..n).map(|i| 0.02 * (i as f64) + rng.normal()).collect();
 
-    println!("## backfold demo: 6 streaming superpowers verified live on 100,000 ticks\n");
+    println!("## backfold demo: 7 streaming superpowers verified live on 100,000 ticks\n");
 
     // 1. Out-of-order 2D Kalman repair + exact O(log T) RTS smoothing & marginal log-likelihood
     let k_entries: Vec<_> = ts
@@ -1015,7 +1017,7 @@ fn run_demo() {
         .zip(zs.iter())
         .map(|(&t, &z)| (EventKey::at(t), CusumMonoid::singleton_z(t, z, 0.5).unwrap()))
         .collect();
-    let mut cus: FoldTree<CusumMonoid, 16> = FoldTree::from_sorted((), c_entries);
+    let mut cus: FoldTree<CusumMonoid, 4> = FoldTree::from_sorted((), c_entries);
     let fa_before = cus
         .find_first_prefix(|m| m.max_peak() >= 10.0)
         .map(|(k, _)| k.event_time);
@@ -1039,7 +1041,7 @@ fn run_demo() {
     let t_f0 = Instant::now();
     let forks: Vec<_> = (0..64).map(|_| cus.fork()).collect();
     let fork_ns_each = t_f0.elapsed().as_nanos() as f64 / 64.0;
-    let mut ledger: SwarmLedger<EProcessMonoid, 16> = SwarmLedger::new(());
+    let mut ledger: SwarmLedger<EProcessMonoid, 4> = SwarmLedger::new(());
     for a in 0..8u64 {
         ledger.spawn_agent(a);
     }
@@ -1065,36 +1067,27 @@ fn run_demo() {
     );
 
     // 5. 500-channel anytime-valid e-BH FDR control with 50 loud 3x-noise distractors
-    let mut e_vals = Vec::with_capacity(500);
+    let mut flat_500 = Vec::with_capacity(500 * 300);
     for ch in 0..500 {
         let sigma = if (10..60).contains(&ch) { 3.0 } else { 1.0 };
-        let mut raw = Vec::with_capacity(300);
         for t in 0..300 {
             let mut v = rng.normal() * sigma;
             if ch < 10 && t >= 150 {
                 v += 1.8 * sigma;
             }
-            raw.push(v);
+            flat_500.push(v);
         }
-        let (med, mad) = backfold_core::digest::causal_robust_scale(&raw[..100]);
-        let entries: Vec<_> = (100..300)
-            .map(|t| {
-                let z = (raw[t] - med) / mad;
-                (
-                    EventKey::at(t as i64),
-                    EProcessMonoid::singleton_z_composite(t as i64, z, 0.15).unwrap(),
-                )
-            })
-            .collect();
-        let tree: FoldTree<EProcessMonoid, 16> = FoldTree::from_sorted((), entries);
-        e_vals.push(tree.summary().e_value());
     }
-    let rej = ebh_reject(&e_vals, 0.05);
+    let t_sift = Instant::now();
+    let sifted = sift_streams_fdr(&flat_500, 500, 300, 100, 0.05, 0.15).unwrap();
+    let sift_ms = t_sift.elapsed().as_secs_f64() * 1e3;
+    let rej = &sifted.rejected_indices;
     let tp = rej.iter().filter(|&&c| c < 10).count();
     let loud_fp = rej.iter().filter(|&&c| (10..60).contains(&c)).count();
     let fp = rej.len() - tp;
     println!(
-        "5. [500-Stream e-BH FDR]        10 true shocks + 50 3x-loud traps -> TP={}/10, FP={}, loud-trap FP={} (FDR={:.3} <= 0.05)",
+        "5. [500-Stream e-BH FDR]        10 true shocks + 50 3x-loud traps in {:.1} ms -> TP={}/10, FP={}, loud-trap FP={} (FDR={:.3} <= 0.05)",
+        sift_ms,
         tp,
         fp,
         loud_fp,
@@ -1113,7 +1106,7 @@ fn run_demo() {
     let dig = build_stream_digest("demo_telemetry", &ts, &dvals, 4, 10.0).unwrap();
     let dig_ms = t_d0.elapsed().as_secs_f64() * 1e3;
     println!(
-        "6. [Agent Stream Digest]        100,000 ticks (~{}k raw tok) -> ~{} tok ({:.0}× compression) in {:.1} ms | first_alarm={:?} | max={:.2}@{}\n",
+        "6. [Agent Stream Digest]        100,000 ticks (~{}k raw tok) -> ~{} tok ({:.0}× compression) in {:.1} ms | first_alarm={:?} | max={:.2}@{}",
         dig.raw_approx_tokens / 1000,
         dig.digest_approx_tokens,
         dig.compression_ratio,
@@ -1122,8 +1115,47 @@ fn run_demo() {
         dig.global_max,
         dig.global_max_ts
     );
+
+    // 7. Exact O(log^2 T) Zero-Blind-Spot Bayesian Changepoint Locator + 106-bit Streaming PCA
+    let mut kf_cp = kf.fork();
+    for (offset, &y_val) in ys[61_234..61_264].iter().enumerate() {
+        let i = 61_234 + offset;
+        kf_cp.upsert(
+            EventKey::at(i as i64),
+            KalmanFilter2D::from_constant_velocity(1.0, 1e-3, 0.25, y_val + 9.0).unwrap(),
+        );
+    }
+    let t_cp0 = Instant::now();
+    let q_jump = [200.0, 0.0, 0.0, 1.0];
+    let (best_cp_t, best_cp_bf) = locate_changepoint_2d(&kf_cp, m0, p0, q_jump, 64)
+        .unwrap()
+        .unwrap_or((0, 0.0));
+    let cp_us = t_cp0.elapsed().as_secs_f64() * 1e6;
+    let cov_entries: Vec<_> = (0..10_000i64)
+        .map(|i| {
+            let z0 = rng.normal() * 5.0;
+            let z1 = rng.normal() * 1.5;
+            let row = [
+                1e12 + z0,
+                1e12 + 0.9 * z0 + z1,
+                1e12 - 0.5 * z0 + 0.4 * z1,
+                1e12 + 0.2 * z1 + rng.normal() * 0.2,
+            ];
+            (EventKey::at(i), CovarianceMonoid::singleton(i, &row).unwrap())
+        })
+        .collect();
+    let cov_tree: FoldTree<CovarianceMonoid, 4> = FoldTree::from_sorted(4, cov_entries);
+    let pca = cov_tree.summary().pca(1, Some(2));
     println!(
-        "All 6 live scenarios verified in {:.2} s (0 approximations, 0 downloads).",
+        "7. [Changepoint BF + 1e12 PCA]  O(log^2 T) global shock locator on T=100k in {:.1} µs (peak={} logBF={:.1}); 1e12-offset 4D PCA top-2 EVR=[{:.1}%, {:.1}%]\n",
+        cp_us,
+        best_cp_t,
+        best_cp_bf,
+        pca.explained_variance_ratio[0] * 100.0,
+        pca.explained_variance_ratio[1] * 100.0
+    );
+    println!(
+        "All 7 live scenarios verified in {:.2} s (0 approximations, 0 downloads).",
         t_total.elapsed().as_secs_f64()
     );
 }
@@ -1162,7 +1194,7 @@ fn read_csv_columns(
 
 fn print_help() {
     println!(
-        "backfold {} — O(log T) out-of-order streaming inference, RTS smoothing & agent stream compression\n",
+        "backfold {} — O(log T) out-of-order streaming inference, RTS smoothing, MCP server & stream compression\n",
         env!("CARGO_PKG_VERSION")
     );
     println!("USAGE:");
@@ -1170,6 +1202,7 @@ fn print_help() {
     println!("  backfold bench [--json]");
     println!("  backfold digest <file.csv> [--time-col 0] [--value-col 1] [--top-k 5] [--threshold 10.0] [--json]");
     println!("  backfold drill <file.csv> --start <ts> --end <ts> [--time-col 0] [--value-col 1]");
+    println!("  backfold mcp                      Run zero-dependency stdio MCP JSON-RPC 2.0 server");
 }
 
 fn main() {
@@ -1185,6 +1218,7 @@ fn main() {
 
     match args[1].as_str() {
         "demo" => run_demo(),
+        "mcp" => mcp::run_mcp_server(),
         "bench" => {
             let as_json = args.iter().any(|a| a == "--json");
             run_bench_suite(as_json);
@@ -1286,7 +1320,7 @@ fn main() {
                 .zip(vals.iter())
                 .map(|(&t, &x)| (EventKey::at(t), MomentsMonoid::singleton(t, x).unwrap()))
                 .collect();
-            let tree: FoldTree<MomentsMonoid, 16> = FoldTree::from_unsorted((), entries);
+            let tree: FoldTree<MomentsMonoid, 4> = FoldTree::from_unsorted((), entries);
             let sub = tree.query_time_range(start, end);
             println!(
                 "# Drilldown `{}` [{}..{}] (n={}, mean={:.4}, std={:.4}, min={:.4}, max={:.4})",

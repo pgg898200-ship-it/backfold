@@ -1,0 +1,26 @@
+User-agent: *
+Allow: /
+
+# AI / LLM crawlers & coding-agent discovery
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+Sitemap: https://pgg898200-ship-it.github.io/backfold/sitemap.xml
+# LLM-optimized docs: https://pgg898200-ship-it.github.io/backfold/llms.txt
+# Full LLM reference: https://pgg898200-ship-it.github.io/backfold/llms-full.txt
+# Agent skill:        https://pgg898200-ship-it.github.io/backfold/SKILL.md

@@ -127,8 +127,10 @@ impl KalmanFilter1D {
         Ok((mean, var))
     }
 
-    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, p0)`.
-    pub fn log_marginal_likelihood(&self, m0: f64, p0: f64) -> Result<f64, BackfoldError> {
+    /// Prior-fusion increment `log p(y_{1:T} | N(m0, p0)) - self.log_z` (cancels `self.log_z`
+    /// identically when comparing two priors on the same suffix, e.g. changepoint Bayes factors).
+    #[inline]
+    pub fn log_prior_coupling(&self, m0: f64, p0: f64) -> Result<f64, BackfoldError> {
         let m0 = check_finite(m0, "m0")?;
         let p0 = check_finite(p0, "p0")?;
         if p0 < 0.0 {
@@ -137,17 +139,21 @@ impl KalmanFilter1D {
         if self.n == 0 {
             return Ok(0.0);
         }
-        let prior = Self {
-            n: 1,
-            a: 0.0,
-            b: m0,
-            c: p0,
-            eta: 0.0,
-            j: 0.0,
-            anchor: 0.0,
-            log_z: 0.0,
-        };
-        Ok(Self::combine(&prior, self, &()).log_z)
+        let delta = m0 - self.anchor;
+        let det = 1.0 + p0 * self.j;
+        let d = 1.0 / det;
+        let quad = delta * d * (2.0 * self.eta - self.j * delta) + self.eta * d * p0 * self.eta;
+        Ok(-0.5 * det.ln() + 0.5 * quad)
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, p0)`.
+    pub fn log_marginal_likelihood(&self, m0: f64, p0: f64) -> Result<f64, BackfoldError> {
+        let coupling = self.log_prior_coupling(m0, p0)?;
+        if self.n == 0 {
+            Ok(0.0)
+        } else {
+            Ok(self.log_z + coupling)
+        }
     }
 
     /// Exact Rauch-Tung-Striebel (RTS) Bayesian smoothing fusion combining filtered posterior
@@ -432,38 +438,75 @@ impl KalmanFilter2D {
         if self.n == 0 {
             return Ok((m0, p0));
         }
-        let prior = Self {
-            n: 1,
-            a: [0.0; 4],
-            b: m0,
-            c: p0,
-            eta: [0.0; 2],
-            j: [0.0; 4],
-            anchor: [0.0; 2],
-            log_z: 0.0,
-        };
-        let combined = Self::combine(&prior, self, &());
-        Ok((combined.b, combined.c))
+        let delta = [m0[0] - self.anchor[0], m0[1] - self.anchor[1]];
+        let cj = mul2(&p0, &self.j);
+        let det_m0 = 1.0 + cj[0];
+        let det_m1 = cj[1];
+        let det_m2 = cj[2];
+        let det_m3 = 1.0 + cj[3];
+        let inv_det = 1.0 / (det_m0 * det_m3 - det_m1 * det_m2);
+        let d = [
+            det_m3 * inv_det,
+            -det_m1 * inv_det,
+            -det_m2 * inv_det,
+            det_m0 * inv_det,
+        ];
+        let a_d = mul2(&self.a, &d);
+        let p_eta = mv2(&p0, &self.eta);
+        let ab = mv2(&a_d, &[delta[0] + p_eta[0], delta[1] + p_eta[1]]);
+        let mean = [ab[0] + self.b[0], ab[1] + self.b[1]];
+        let a_d_p = mul2(&a_d, &p0);
+        let c_tmp = mul2_tr(&a_d_p, &self.a);
+        let cov = sym2([
+            c_tmp[0] + self.c[0],
+            c_tmp[1] + self.c[1],
+            c_tmp[2] + self.c[2],
+            c_tmp[3] + self.c[3],
+        ]);
+        Ok((mean, cov))
     }
 
-    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, P0)`.
-    pub fn log_marginal_likelihood(&self, m0: [f64; 2], p0: [f64; 4]) -> Result<f64, BackfoldError> {
+    /// Prior-fusion increment `log p(y_{1:T} | N(m0, P0)) - self.log_z` (cancels `self.log_z`
+    /// identically when comparing two priors on the same suffix, e.g. changepoint Bayes factors).
+    #[inline]
+    pub fn log_prior_coupling(&self, m0: [f64; 2], p0: [f64; 4]) -> Result<f64, BackfoldError> {
         check_all_finite(&m0, "m0")?;
         check_all_finite(&p0, "p0")?;
         if self.n == 0 {
             return Ok(0.0);
         }
-        let prior = Self {
-            n: 1,
-            a: [0.0; 4],
-            b: m0,
-            c: p0,
-            eta: [0.0; 2],
-            j: [0.0; 4],
-            anchor: [0.0; 2],
-            log_z: 0.0,
-        };
-        Ok(Self::combine(&prior, self, &()).log_z)
+        let delta = [m0[0] - self.anchor[0], m0[1] - self.anchor[1]];
+        let cj = mul2(&p0, &self.j);
+        let det_m0 = 1.0 + cj[0];
+        let det_m1 = cj[1];
+        let det_m2 = cj[2];
+        let det_m3 = 1.0 + cj[3];
+        let det = det_m0 * det_m3 - det_m1 * det_m2;
+        let inv_det = 1.0 / det;
+        let d = [
+            det_m3 * inv_det,
+            -det_m1 * inv_det,
+            -det_m2 * inv_det,
+            det_m0 * inv_det,
+        ];
+        let dt = [d[0], d[2], d[1], d[3]];
+        let p_eta = mv2(&p0, &self.eta);
+        let j_delta = mv2(&self.j, &delta);
+        let rhs_e = [self.eta[0] - j_delta[0], self.eta[1] - j_delta[1]];
+        let dt_v = mv2(&dt, &[self.eta[0] + rhs_e[0], self.eta[1] + rhs_e[1]]);
+        let d_p_eta = mv2(&d, &p_eta);
+        let quad = dot2(&delta, &dt_v) + dot2(&self.eta, &d_p_eta);
+        Ok(-0.5 * det.abs().ln() + 0.5 * quad)
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, P0)`.
+    pub fn log_marginal_likelihood(&self, m0: [f64; 2], p0: [f64; 4]) -> Result<f64, BackfoldError> {
+        let coupling = self.log_prior_coupling(m0, p0)?;
+        if self.n == 0 {
+            Ok(0.0)
+        } else {
+            Ok(self.log_z + coupling)
+        }
     }
 
     /// Exact Rauch-Tung-Striebel (RTS) Bayesian smoothing fusion combining filtered posterior
@@ -564,16 +607,16 @@ impl Monoid for KalmanFilter2D {
         let c1_eta2 = mv2(&e1.c, &e2.eta);
         let rhs_b = [delta[0] + c1_eta2[0], delta[1] + c1_eta2[1]];
         let ab = mv2(&a2_d, &rhs_b);
-        let b12 = flush2([ab[0] + e2.b[0], ab[1] + e2.b[1]]);
+        let b12 = [ab[0] + e2.b[0], ab[1] + e2.b[1]];
 
         let a2_d_c1 = mul2(&a2_d, &e1.c);
         let c_tmp = mul2_tr(&a2_d_c1, &e2.a);
-        let c12 = flush4(sym2([
+        let c12 = sym2([
             c_tmp[0] + e2.c[0],
             c_tmp[1] + e2.c[1],
             c_tmp[2] + e2.c[2],
             c_tmp[3] + e2.c[3],
-        ]));
+        ]);
 
         let a1t_dt = mul2_tl(&e1.a, &dt);
         let j2_delta = mv2(&e2.j, &delta);
@@ -583,12 +626,12 @@ impl Monoid for KalmanFilter2D {
 
         let a1t_dt_j2 = mul2(&a1t_dt, &e2.j);
         let j_tmp = mul2(&a1t_dt_j2, &e1.a);
-        let j12 = flush4(sym2([
+        let j12 = sym2([
             j_tmp[0] + e1.j[0],
             j_tmp[1] + e1.j[1],
             j_tmp[2] + e1.j[2],
             j_tmp[3] + e1.j[3],
-        ]));
+        ]);
 
         // Exact anchor-centered associative marginal log-likelihood update (delta = O(1)!)
         let dt_v = mv2(&dt, &[e2.eta[0] + rhs_e[0], e2.eta[1] + rhs_e[1]]);
@@ -1181,8 +1224,9 @@ impl KalmanMonoid {
         })
     }
 
-    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, P0)`.
-    pub fn log_marginal_likelihood(&self, m0: &[f64], p0: &[f64]) -> Result<f64, BackfoldError> {
+    /// Prior-fusion increment `log p(y_{1:T} | N(m0, P0)) - self.log_z` (cancels `self.log_z`
+    /// identically when comparing two priors on the same suffix, e.g. changepoint Bayes factors).
+    pub fn log_prior_coupling(&self, m0: &[f64], p0: &[f64]) -> Result<f64, BackfoldError> {
         let d = self.dim;
         if m0.len() != d || p0.len() != d * d {
             return Err(BackfoldError::DimensionMismatch {
@@ -1195,18 +1239,44 @@ impl KalmanMonoid {
         if self.n == 0 {
             return Ok(0.0);
         }
-        let prior = Self {
-            dim: d,
-            n: 1,
-            a: vec![0.0; d * d],
-            b: m0.to_vec(),
-            c: p0.to_vec(),
-            eta: vec![0.0; d],
-            j: vec![0.0; d * d],
-            anchor: vec![0.0; d],
-            log_z: 0.0,
-        };
-        Ok(Self::combine(&prior, self, &d).log_z)
+        let mut delta = vec![0.0; d];
+        for i in 0..d {
+            delta[i] = m0[i] - self.anchor[i];
+        }
+        let mut m = mat_mul(d, p0, &self.j);
+        for i in 0..d {
+            m[i * d + i] += 1.0;
+        }
+        let (inv_m, log_det_m) = invert_square_with_logdet(d, &m)?;
+        let mut inv_mt = vec![0.0; d * d];
+        for i in 0..d {
+            for j in 0..d {
+                inv_mt[i * d + j] = inv_m[j * d + i];
+            }
+        }
+        let p_eta = mat_vec(d, p0, &self.eta);
+        let j_delta = mat_vec(d, &self.j, &delta);
+        let mut sum_eta_rhs = vec![0.0; d];
+        for i in 0..d {
+            sum_eta_rhs[i] = 2.0 * self.eta[i] - j_delta[i];
+        }
+        let dt_v = mat_vec(d, &inv_mt, &sum_eta_rhs);
+        let d_p_eta = mat_vec(d, &inv_m, &p_eta);
+        let mut quad = 0.0;
+        for i in 0..d {
+            quad += delta[i] * dt_v[i] + self.eta[i] * d_p_eta[i];
+        }
+        Ok(-0.5 * log_det_m + 0.5 * quad)
+    }
+
+    /// Exact Bayesian marginal log-likelihood `log p(y_{1:T})` under initial prior `N(m0, P0)`.
+    pub fn log_marginal_likelihood(&self, m0: &[f64], p0: &[f64]) -> Result<f64, BackfoldError> {
+        let coupling = self.log_prior_coupling(m0, p0)?;
+        if self.n == 0 {
+            Ok(0.0)
+        } else {
+            Ok(self.log_z + coupling)
+        }
     }
 
     /// Exact Rauch-Tung-Striebel (RTS) Bayesian smoothing fusion combining filtered posterior
@@ -1393,54 +1463,335 @@ impl Monoid for KalmanMonoid {
 }
 
 /// Exact O(log T) Rauch-Tung-Striebel (RTS) smoothed posterior `p(x_t | y_{1:T})` at any
-/// timestamp `t` in a persistent `FoldTree<KalmanFilter1D, B>`.
+/// timestamp `t` in a persistent `FoldTree<KalmanFilter1D, B>` via a single root-to-leaf walk.
 pub fn smooth_1d<const B: usize>(
     tree: &FoldTree<KalmanFilter1D, B>,
     t: i64,
     m0: f64,
     p0: f64,
 ) -> Result<(f64, f64), BackfoldError> {
-    let left = tree.prefix(EventKey::time_end(t));
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
     let (m_f, p_f) = left.posterior(m0, p0)?;
-    if t == i64::MAX {
-        return Ok((m_f, p_f));
-    }
-    let right = tree.suffix(EventKey::time_start(t + 1));
     KalmanFilter1D::smooth_fusion(m_f, p_f, &right)
 }
 
 /// Exact O(log T) Rauch-Tung-Striebel (RTS) smoothed posterior `p(x_t | y_{1:T})` at any
-/// timestamp `t` in a persistent `FoldTree<KalmanFilter2D, B>`.
+/// timestamp `t` in a persistent `FoldTree<KalmanFilter2D, B>` via a single root-to-leaf walk.
 pub fn smooth_2d<const B: usize>(
     tree: &FoldTree<KalmanFilter2D, B>,
     t: i64,
     m0: [f64; 2],
     p0: [f64; 4],
 ) -> Result<([f64; 2], [f64; 4]), BackfoldError> {
-    let left = tree.prefix(EventKey::time_end(t));
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
     let (m_f, p_f) = left.posterior(m0, p0)?;
-    if t == i64::MAX {
-        return Ok((m_f, p_f));
-    }
-    let right = tree.suffix(EventKey::time_start(t + 1));
     KalmanFilter2D::smooth_fusion(m_f, p_f, &right)
 }
 
 /// Exact O(log T) Rauch-Tung-Striebel (RTS) smoothed posterior `p(x_t | y_{1:T})` at any
-/// timestamp `t` in a persistent general-dimension `FoldTree<KalmanMonoid, B>`.
+/// timestamp `t` in a persistent general-dimension `FoldTree<KalmanMonoid, B>` via a single walk.
 pub fn smooth_nd<const B: usize>(
     tree: &FoldTree<KalmanMonoid, B>,
     t: i64,
     m0: &[f64],
     p0: &[f64],
 ) -> Result<KalmanPosterior, BackfoldError> {
-    let left = tree.prefix(EventKey::time_end(t));
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
     let filt = left.posterior(m0, p0)?;
-    if t == i64::MAX {
-        return Ok(filt);
-    }
-    let right = tree.suffix(EventKey::time_start(t + 1));
     KalmanMonoid::smooth_fusion(&filt.mean, &filt.cov, &right)
+}
+
+/// Exact O(log T) Bayesian changepoint log-Bayes-factor
+/// `log(p(y_{<=t}) * p(y_{>t}) / p(y_{1:T}))` testing a full state reset to `N(m0, p0)` right
+/// after timestamp `t` (1D). Uses exact prior-coupling differencing so `right.log_z` cancels
+/// algebraically with zero catastrophic cancellation at arbitrary horizon `T`.
+pub fn changepoint_bayes_factor_1d<const B: usize>(
+    tree: &FoldTree<KalmanFilter1D, B>,
+    t: i64,
+    m0: f64,
+    p0: f64,
+) -> Result<f64, BackfoldError> {
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
+    if left.n == 0 || right.n == 0 {
+        return Ok(0.0);
+    }
+    let (mf, pf) = left.posterior(m0, p0)?;
+    let c_reset = right.log_prior_coupling(m0, p0)?;
+    let c_cont = right.log_prior_coupling(mf, pf)?;
+    Ok(c_reset - c_cont)
+}
+
+/// Exact O(log T) translation-invariant Bayesian state-shock log-Bayes-factor testing an
+/// instantaneous shock `x_t^+ ~ N(m_f, p_f + q_jump)` vs continuity `N(m_f, p_f)` after `t` (1D).
+pub fn changepoint_shock_bayes_factor_1d<const B: usize>(
+    tree: &FoldTree<KalmanFilter1D, B>,
+    t: i64,
+    m0: f64,
+    p0: f64,
+    q_jump: f64,
+) -> Result<f64, BackfoldError> {
+    let q_jump = check_finite(q_jump, "q_jump")?;
+    if q_jump < 0.0 {
+        return Err(BackfoldError::InvalidParameter("q_jump must be >= 0"));
+    }
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
+    if left.n == 0 || right.n == 0 {
+        return Ok(0.0);
+    }
+    let (mf, pf) = left.posterior(m0, p0)?;
+    let c_jump = right.log_prior_coupling(mf, pf + q_jump)?;
+    let c_cont = right.log_prior_coupling(mf, pf)?;
+    Ok(c_jump - c_cont)
+}
+
+/// Exact O(log T) Bayesian changepoint log-Bayes-factor
+/// `log(p(y_{<=t}) * p(y_{>t}) / p(y_{1:T}))` testing a state reset to `N(m0, P0)` after `t` (2D).
+pub fn changepoint_bayes_factor_2d<const B: usize>(
+    tree: &FoldTree<KalmanFilter2D, B>,
+    t: i64,
+    m0: [f64; 2],
+    p0: [f64; 4],
+) -> Result<f64, BackfoldError> {
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
+    if left.n == 0 || right.n == 0 {
+        return Ok(0.0);
+    }
+    let (mf, pf) = left.posterior(m0, p0)?;
+    let c_reset = right.log_prior_coupling(m0, p0)?;
+    let c_cont = right.log_prior_coupling(mf, pf)?;
+    Ok(c_reset - c_cont)
+}
+
+/// Exact O(log T) translation-invariant Bayesian state-shock log-Bayes-factor testing an
+/// instantaneous shock `x_t^+ ~ N(m_f, P_f + Q_jump)` vs continuity `N(m_f, P_f)` after `t` (2D).
+pub fn changepoint_shock_bayes_factor_2d<const B: usize>(
+    tree: &FoldTree<KalmanFilter2D, B>,
+    t: i64,
+    m0: [f64; 2],
+    p0: [f64; 4],
+    q_jump: [f64; 4],
+) -> Result<f64, BackfoldError> {
+    check_all_finite(&q_jump, "q_jump")?;
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
+    if left.n == 0 || right.n == 0 {
+        return Ok(0.0);
+    }
+    let (mf, pf) = left.posterior(m0, p0)?;
+    let p_jump = sym2([
+        pf[0] + q_jump[0],
+        pf[1] + q_jump[1],
+        pf[2] + q_jump[2],
+        pf[3] + q_jump[3],
+    ]);
+    let c_jump = right.log_prior_coupling(mf, p_jump)?;
+    let c_cont = right.log_prior_coupling(mf, pf)?;
+    Ok(c_jump - c_cont)
+}
+
+/// Exact O(log T) Bayesian changepoint log-Bayes-factor
+/// `log(p(y_{<=t}) * p(y_{>t}) / p(y_{1:T}))` testing a state reset to `N(m0, P0)` after `t` (ND).
+pub fn changepoint_bayes_factor_nd<const B: usize>(
+    tree: &FoldTree<KalmanMonoid, B>,
+    t: i64,
+    m0: &[f64],
+    p0: &[f64],
+) -> Result<f64, BackfoldError> {
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
+    if left.n == 0 || right.n == 0 {
+        return Ok(0.0);
+    }
+    let filt = left.posterior(m0, p0)?;
+    let c_reset = right.log_prior_coupling(m0, p0)?;
+    let c_cont = right.log_prior_coupling(&filt.mean, &filt.cov)?;
+    Ok(c_reset - c_cont)
+}
+
+/// Exact O(log T) translation-invariant Bayesian state-shock log-Bayes-factor testing an
+/// instantaneous shock `x_t^+ ~ N(m_f, P_f + Q_jump)` vs continuity `N(m_f, P_f)` after `t` (ND).
+pub fn changepoint_shock_bayes_factor_nd<const B: usize>(
+    tree: &FoldTree<KalmanMonoid, B>,
+    t: i64,
+    m0: &[f64],
+    p0: &[f64],
+    q_jump: &[f64],
+) -> Result<f64, BackfoldError> {
+    check_all_finite(q_jump, "q_jump")?;
+    let (left, right) = tree.split_summary(EventKey::time_end(t));
+    if left.n == 0 || right.n == 0 {
+        return Ok(0.0);
+    }
+    let filt = left.posterior(m0, p0)?;
+    if q_jump.len() != filt.cov.len() {
+        return Err(BackfoldError::DimensionMismatch {
+            expected: filt.cov.len(),
+            got: q_jump.len(),
+        });
+    }
+    let mut p_jump = vec![0.0; filt.cov.len()];
+    for i in 0..filt.cov.len() {
+        p_jump[i] = filt.cov[i] + q_jump[i];
+    }
+    symmetrize(filt.dim, &mut p_jump);
+    let c_jump = right.log_prior_coupling(&filt.mean, &p_jump)?;
+    let c_cont = right.log_prior_coupling(&filt.mean, &filt.cov)?;
+    Ok(c_jump - c_cont)
+}
+
+/// Zero-blind-spot hierarchical Bayesian shock changepoint locator (1D).
+///
+/// Reads cached subtree `log_z` summaries directly from `FoldTree` (zero `combine` calls during
+/// screening, checking both `<= 64`-tick subtrees and their `<= 256`-tick parents so no boundary
+/// shock can fall in a crack), zooms the top-3 highest excess-NLL regions, and evaluates exact
+/// single-tick `changepoint_shock_bayes_factor_1d`.
+pub fn locate_changepoint_1d<const B: usize>(
+    tree: &FoldTree<KalmanFilter1D, B>,
+    m0: f64,
+    p0: f64,
+    q_jump: f64,
+    n_windows: usize,
+) -> Result<Option<(i64, f64)>, BackfoldError> {
+    let n = tree.len();
+    if n < 4 {
+        return Ok(None);
+    }
+    let baseline = tree.summary().log_z / (n as f64);
+    let max_sub_len = (n / n_windows.clamp(8, 256)).clamp(16, 64);
+    let mut cands = tree.scan_cached_subtrees(max_sub_len, |m, len| {
+        if len < 2 {
+            f64::NEG_INFINITY
+        } else {
+            baseline * (len as f64) - m.log_z
+        }
+    });
+    cands.sort_by(|a, b| b.3.total_cmp(&a.3));
+
+    let score_win = |a: i64, b: i64| -> (u64, f64) {
+        let seg = tree.query_time_range(a, b);
+        if seg.n < 2 {
+            (seg.n, f64::NEG_INFINITY)
+        } else {
+            (seg.n, baseline * (seg.n as f64) - seg.log_z)
+        }
+    };
+
+    let mut best: Option<(i64, f64)> = None;
+    for &(k_lo, k_hi, _, _) in cands.iter().take(4) {
+        let mut lo = k_lo.event_time;
+        let mut hi = k_hi.event_time;
+        for _ in 0..16 {
+            let (cnt, _) = score_win(lo, hi);
+            if cnt <= 24 || hi - lo <= 4 {
+                break;
+            }
+            let mid = lo + (hi - lo) / 2;
+            let ov = ((hi - lo) / 8).clamp(2, 32);
+            let l_hi = (mid + ov).min(hi);
+            let r_lo = (mid - ov).max(lo);
+            let (_, ls) = score_win(lo, l_hi);
+            let (_, rs) = score_win(r_lo, hi);
+            if ls >= rs {
+                if l_hi == hi {
+                    break;
+                }
+                hi = l_hi;
+            } else {
+                if r_lo == lo {
+                    break;
+                }
+                lo = r_lo;
+            }
+        }
+        let mut last_t = i64::MIN;
+        for (k, _) in tree.iter_range(EventKey::time_start(lo), EventKey::time_end(hi)) {
+            if k.event_time == last_t {
+                continue;
+            }
+            last_t = k.event_time;
+            let bf = changepoint_shock_bayes_factor_1d(tree, k.event_time, m0, p0, q_jump)?;
+            if best.is_none_or(|(_, b)| bf > b) {
+                best = Some((k.event_time, bf));
+            }
+        }
+    }
+    Ok(best)
+}
+
+/// Zero-blind-spot hierarchical Bayesian shock changepoint locator (2D).
+///
+/// Screens cached `FoldTree` subtrees (`<= 64` ticks and `<= 256`-tick boundary-covering parents)
+/// with zero `combine` overhead, zooms top-4 excess-NLL regions, and evaluates exact single-tick
+/// `changepoint_shock_bayes_factor_2d` across every tick in the zoomed intervals.
+pub fn locate_changepoint_2d<const B: usize>(
+    tree: &FoldTree<KalmanFilter2D, B>,
+    m0: [f64; 2],
+    p0: [f64; 4],
+    q_jump: [f64; 4],
+    n_windows: usize,
+) -> Result<Option<(i64, f64)>, BackfoldError> {
+    let n = tree.len();
+    if n < 4 {
+        return Ok(None);
+    }
+    let baseline = tree.summary().log_z / (n as f64);
+    let max_sub_len = (n / n_windows.clamp(8, 256)).clamp(16, 64);
+    let mut cands = tree.scan_cached_subtrees(max_sub_len, |m, len| {
+        if len < 2 {
+            f64::NEG_INFINITY
+        } else {
+            baseline * (len as f64) - m.log_z
+        }
+    });
+    cands.sort_by(|a, b| b.3.total_cmp(&a.3));
+
+    let score_win = |a: i64, b: i64| -> (u64, f64) {
+        let seg = tree.query_time_range(a, b);
+        if seg.n < 2 {
+            (seg.n, f64::NEG_INFINITY)
+        } else {
+            (seg.n, baseline * (seg.n as f64) - seg.log_z)
+        }
+    };
+
+    let mut best: Option<(i64, f64)> = None;
+    for &(k_lo, k_hi, _, _) in cands.iter().take(4) {
+        let mut lo = k_lo.event_time;
+        let mut hi = k_hi.event_time;
+        for _ in 0..16 {
+            let (cnt, _) = score_win(lo, hi);
+            if cnt <= 24 || hi - lo <= 4 {
+                break;
+            }
+            let mid = lo + (hi - lo) / 2;
+            let ov = ((hi - lo) / 8).clamp(2, 32);
+            let l_hi = (mid + ov).min(hi);
+            let r_lo = (mid - ov).max(lo);
+            let (_, ls) = score_win(lo, l_hi);
+            let (_, rs) = score_win(r_lo, hi);
+            if ls >= rs {
+                if l_hi == hi {
+                    break;
+                }
+                hi = l_hi;
+            } else {
+                if r_lo == lo {
+                    break;
+                }
+                lo = r_lo;
+            }
+        }
+        let mut last_t = i64::MIN;
+        for (k, _) in tree.iter_range(EventKey::time_start(lo), EventKey::time_end(hi)) {
+            if k.event_time == last_t {
+                continue;
+            }
+            last_t = k.event_time;
+            let bf = changepoint_shock_bayes_factor_2d(tree, k.event_time, m0, p0, q_jump)?;
+            if best.is_none_or(|(_, b)| bf > b) {
+                best = Some((k.event_time, bf));
+            }
+        }
+    }
+    Ok(best)
 }
 
 #[cfg(test)]
@@ -1671,5 +2022,76 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn changepoint_bayes_factor_exact_parity_and_shock_localization() {
+        let n = 250usize;
+        let true_cp = 120usize;
+        let offset = 1e6_f64;
+        let mut entries1 = Vec::with_capacity(n);
+        let mut entries2 = Vec::with_capacity(n);
+        let mut entries_n = Vec::with_capacity(n);
+        let mut seed = 987654321u64;
+        for t in 0..n {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let noise = (((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5) * 0.4;
+            let y = if t <= true_cp {
+                0.05 * (t as f64) + noise
+            } else {
+                0.05 * (t as f64) + 12.0 + 0.15 * ((t - true_cp) as f64) + noise
+            };
+            entries1.push((
+                EventKey::at(t as i64),
+                KalmanFilter1D::from_random_walk(1.0, 0.05, 0.25, y).unwrap(),
+            ));
+            entries2.push((
+                EventKey::at(t as i64),
+                KalmanFilter2D::from_constant_velocity(1.0, 1e-3, 0.25, y + offset).unwrap(),
+            ));
+            entries_n.push((
+                EventKey::at(t as i64),
+                KalmanMonoid::from_constant_velocity(1.0, 1e-3, 0.25, y).unwrap(),
+            ));
+        }
+        let tree1: FoldTree<KalmanFilter1D, 8> = FoldTree::from_sorted((), entries1);
+        let tree2: FoldTree<KalmanFilter2D, 2> = FoldTree::from_sorted((), entries2);
+        let treen: FoldTree<KalmanMonoid, 2> = FoldTree::from_sorted(2, entries_n);
+
+        // 1. Exact parity with brute-force (ll_left + ll_right - ll_full) for 1D, 2D, ND
+        let m0_2 = [0.0, 0.0];
+        let p0_2 = [100.0, 0.0, 0.0, 10.0];
+        for &split_t in &[30i64, 120, 180] {
+            let bf1 = changepoint_bayes_factor_1d(&tree1, split_t, 0.0, 100.0).unwrap();
+            let (l1, r1) = tree1.split_summary(EventKey::time_end(split_t));
+            let ref1 = l1.log_marginal_likelihood(0.0, 100.0).unwrap()
+                + r1.log_marginal_likelihood(0.0, 100.0).unwrap()
+                - tree1.summary().log_marginal_likelihood(0.0, 100.0).unwrap();
+            assert!((bf1 - ref1).abs() < 1e-10, "1D BF mismatch: {bf1} vs {ref1}");
+
+            let bfn = changepoint_bayes_factor_nd(&treen, split_t, &m0_2, &p0_2).unwrap();
+            let (ln, rn) = treen.split_summary(EventKey::time_end(split_t));
+            let refn = ln.log_marginal_likelihood(&m0_2, &p0_2).unwrap()
+                + rn.log_marginal_likelihood(&m0_2, &p0_2).unwrap()
+                - treen.summary().log_marginal_likelihood(&m0_2, &p0_2).unwrap();
+            assert!((bfn - refn).abs() < 1e-10, "ND BF mismatch: {bfn} vs {refn}");
+        }
+
+        // 2. Translation-invariant shock Bayes factor at +1e6 offset localizes exact changepoint!
+        let m0_hi = [offset, 0.0];
+        let q_jump = [200.0, 0.0, 0.0, 1.0];
+        let mut best_t = 0i64;
+        let mut best_bf = f64::NEG_INFINITY;
+        for t in 10..240i64 {
+            let bf = changepoint_shock_bayes_factor_2d(&tree2, t, m0_hi, p0_2, q_jump).unwrap();
+            if bf > best_bf {
+                best_bf = bf;
+                best_t = t;
+            }
+        }
+        assert_eq!(best_t, true_cp as i64, "expected peak at {true_cp}, got {best_t} (bf={best_bf})");
+        assert!(best_bf > 40.0, "expected huge log-BF at true shock, got {best_bf}");
+        let calm_bf = changepoint_shock_bayes_factor_2d(&tree2, 40, m0_hi, p0_2, q_jump).unwrap();
+        assert!(calm_bf < 0.0, "calm region should have negative Occam log-BF, got {calm_bf}");
     }
 }

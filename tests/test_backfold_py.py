@@ -314,3 +314,106 @@ def test_covariance_stream_high_offset_range_and_mahalanobis() -> None:
     with pytest.raises(ValueError):
         cs_err.upsert(0, [1.0, float("nan"), 2.0])
 
+
+def test_streaming_pca_and_range_pca_parity_at_1e12_offset() -> None:
+    rng = np.random.default_rng(1010)
+    n, d = 500, 6
+    base = 1e12
+    ts = np.arange(n, dtype=np.int64)
+    factors = rng.normal(0.0, [5.0, 2.0, 0.8, 0.3, 0.1, 0.05], size=(n, d))
+    q_orth, _ = np.linalg.qr(rng.normal(size=(d, d)))
+    centered = factors @ q_orth.T
+    xmat = base + centered
+    exact_centered = xmat - base
+
+    cs = bf.CovarianceStream(dim=d)
+    cs.ingest(ts, xmat)
+
+    pca = cs.pca(ddof=1)
+    eigvals = np.array(pca["eigenvalues"])
+    evr = np.array(pca["explained_variance_ratio"])
+    comps = np.array(pca["components"])
+
+    ref_cov = np.cov(exact_centered, rowvar=False, ddof=1)
+    ref_vals = np.linalg.eigvalsh(ref_cov)[::-1]
+    assert np.max(np.abs(eigvals - ref_vals)) < 1e-10
+    assert abs(float(np.sum(evr)) - 1.0) < 1e-13
+    # Orthonormality V V^T == I and exact reconstruction
+    assert np.max(np.abs(comps @ comps.T - np.eye(d))) < 1e-12
+    rec = comps.T @ np.diag(eigvals) @ comps
+    assert np.max(np.abs(rec - ref_cov)) < 1e-10
+
+    # Range PCA on [100, 350] with top_k=2
+    rpca = cs.range_pca(100, 350, ddof=1, top_k=2)
+    ref_rvals = np.linalg.eigvalsh(np.cov(exact_centered[100:351], rowvar=False, ddof=1))[::-1][:2]
+    assert len(rpca["eigenvalues"]) == 2
+    assert np.max(np.abs(np.array(rpca["eigenvalues"]) - ref_rvals)) < 1e-10
+
+
+def test_kalman_changepoint_bayes_factor_and_scan() -> None:
+    rng = np.random.default_rng(1111)
+    n = 400
+    true_cp = 200
+    offset = 1e6
+    ts = np.arange(n, dtype=np.int64)
+    dts = np.ones(n, dtype=np.float64)
+    ys = np.empty(n, dtype=np.float64)
+    for t in range(n):
+        base = 0.04 * t if t <= true_cp else 0.04 * t + 10.0 + 0.12 * (t - true_cp)
+        ys[t] = offset + base + float(rng.normal(0.0, 0.25))
+
+    kf = bf.KalmanStream(dim=2)
+    kf.ingest_constant_velocity(ts, ys, dts, q_accel=1e-3, r_obs=0.25)
+
+    m0 = [offset, 0.0]
+    p0 = [100.0, 0.0, 0.0, 10.0]
+    q_jump = [200.0, 0.0, 0.0, 1.0]
+
+    # Reset-BF exact algebraic parity with range_log_marginal_likelihood
+    bf_reset = kf.changepoint_bayes_factor(150, m0, p0)
+    ll_l = kf.range_log_marginal_likelihood(0, 150, m0, p0)
+    ll_r = kf.range_log_marginal_likelihood(151, n - 1, m0, p0)
+    ll_all = kf.log_marginal_likelihood(m0, p0)
+    assert abs(bf_reset - ((ll_l + ll_r) - ll_all)) < 1e-9
+
+    # Translation-invariant shock scan localizes true_cp cleanly even at +1e6 offset!
+    cands = np.arange(20, 380, dtype=np.int64)
+    scan = kf.scan_changepoints(cands, m0, p0, q_jump=q_jump)
+    assert abs(int(scan["best_ts"]) - true_cp) <= 1
+    assert scan["best_log_bf"] > 40.0
+    assert kf.changepoint_bayes_factor(50, m0, p0, q_jump=q_jump) < 0.0
+
+    # Zero-blind-spot O(log^2 T) global locator matches exact full scan!
+    loc = kf.locate_changepoint(m0, p0, q_jump, n_windows=32)
+    assert abs(int(loc["best_ts"]) - true_cp) <= 1
+    assert loc["best_log_bf"] > 40.0
+
+
+def test_sift_streams_and_gil_free_multithreading() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    rng = np.random.default_rng(1212)
+    n_ch, t_len = 120, 300
+    ch = rng.normal(0.0, 1.0, size=(n_ch, t_len))
+    ch[5:25] *= 3.0  # 20 loud 3x-noise distractors
+    ch[:5, 160:] += 2.0  # 5 true shocks
+
+    out = bf.sift_streams(ch, warmup=100, alpha=0.05, null_margin=0.15)
+    assert set(out["rejected"]) == {0, 1, 2, 3, 4}
+    assert len(out["e_values"]) == n_ch
+    assert len(out["baselines"]) == n_ch
+
+    # Multi-threaded GIL-free concurrency smoke test
+    ts = np.arange(2_000, dtype=np.int64)
+    xs = rng.normal(0.0, 1.0, size=2_000)
+    xs[1000:1010] += 7.0
+
+    def worker(idx: int) -> float:
+        dig = bf.digest_stream(f"ch_{idx}", ts, xs)
+        return float(dig["compression_ratio"])
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        ratios = list(ex.map(worker, range(8)))
+    assert all(r > 20.0 for r in ratios)
+
+

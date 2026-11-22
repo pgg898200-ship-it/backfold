@@ -3,105 +3,667 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>backfold — Persistent O(log T) Out-of-Order Streaming Inference &amp; RTS Smoothing</title>
-  <meta name="description" content="Persistent O(log T) associative-monoid engine for out-of-order, retractable, forkable online statistical inference (Kalman filter + exact RTS smoother + marginal log-likelihood, multivariate Covariance/Mahalanobis, CUSUM, EWMA, Ridge, anytime e-values + e-BH FDR) and <300-token lossless-recoverable agent stream compression. Pure safe Rust + zero-copy Python, Apache-2.0." />
+  <title>backfold — Persistent O(log T) Out-of-Order Streaming Inference, Exact RTS Smoother &amp; MCP Server</title>
+  <meta name="description" content="Persistent O(log T) associative-monoid engine for out-of-order, retractable, forkable online statistical inference (Kalman + exact RTS smoother + Bayesian changepoint locator, 106-bit Covariance/PCA/Mahalanobis, CUSUM, EWMA, Ridge, anytime e-values + e-BH FDR), native stdio MCP server, and <300-token agent stream compression. Pure safe Rust + zero-copy Python + WebAssembly, Apache-2.0." />
+  <link rel="canonical" href="https://pgg898200-ship-it.github.io/backfold/" />
+  <link rel="alternate" type="text/markdown" title="llms.txt" href="https://pgg898200-ship-it.github.io/backfold/llms.txt" />
+
+  <!-- OpenGraph / Social Preview -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://pgg898200-ship-it.github.io/backfold/" />
+  <meta property="og:title" content="backfold — O(log T) Retractable Kalman/RTS Smoother, Streaming PCA &amp; Agent MCP Server" />
+  <meta property="og:description" content="578,868x faster than NumPy RTS (11.1 us @ 100k, diff 1.5e-14); 8,152x faster than -O3 seq Rust @ 500k; 0.0% FDR on 500 streams; native MCP server &amp; live WebAssembly playground." />
+  <meta property="og:image" content="https://pgg898200-ship-it.github.io/backfold/og-card.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+
+  <!-- Twitter / X Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="backfold — O(log T) Retractable Streaming Inference &amp; Exact RTS Smoother" />
+  <meta name="twitter:description" content="Pure safe Rust + zero-copy Python + native MCP server + live in-browser WebAssembly playground. Apache-2.0." />
+  <meta name="twitter:image" content="https://pgg898200-ship-it.github.io/backfold/og-card.png" />
+
+  <!-- Structured Data for Search & AI Discovery -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "backfold",
+    "version": "0.3.0",
+    "license": "https://opensource.org/licenses/Apache-2.0",
+    "codeRepository": "https://github.com/pgg898200-ship-it/backfold",
+    "url": "https://pgg898200-ship-it.github.io/backfold/",
+    "programmingLanguage": ["Rust", "Python", "WebAssembly"],
+    "runtimePlatform": ["Linux", "macOS", "Windows", "WebAssembly"],
+    "description": "Persistent O(log T) associative-monoid engine for out-of-order, retractable, forkable online statistical inference, exact RTS Kalman smoothing, streaming PCA, Bayesian changepoint localization, anytime-valid e-BH FDR control, native MCP server, and lossless-recoverable <300-token agent stream digests."
+  }
+  </script>
+
   <style>
     :root {
       --bg: #ffffff; --card: #f8fafc; --fg: #0f172a; --muted: #475569;
-      --border: #e2e8f0; --accent: #0f766e; --good: #15803d; --code-bg: #f1f5f9;
+      --border: #e2e8f0; --accent: #0f766e; --accent-soft: rgba(15, 118, 110, 0.12);
+      --good: #15803d; --warn: #d97706; --coral: #e11d48; --code-bg: #f1f5f9;
+      --canvas-bg: #f8fafc; --grid: #e2e8f0;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #0b0f19; --card: #111827; --fg: #f1f5f9; --muted: #94a3b8;
-        --border: #1e293b; --accent: #2dd4bf; --good: #4ade80; --code-bg: #0f172a;
+        --border: #1e293b; --accent: #2dd4bf; --accent-soft: rgba(45, 212, 191, 0.14);
+        --good: #4ade80; --warn: #fbbf24; --coral: #fb7185; --code-bg: #0f172a;
+        --canvas-bg: #0f172a; --grid: #1e293b;
       }
     }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
-    .wrap { max-width: 960px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
-    h1 { font-size: 2.2rem; margin: 0 0 .5rem; letter-spacing: -.02em; }
-    h2 { font-size: 1.25rem; margin: 2.25rem 0 .75rem; border-bottom: 1px solid var(--border); padding-bottom: .35rem; }
-    p.lead { color: var(--muted); font-size: 1.05rem; margin: 0 0 1.25rem; }
-    .badges { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.25rem; }
-    .badge { font-family: ui-monospace, monospace; font-size: .78rem; padding: .2rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--muted); }
-    .links { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 2rem; font-size: .92rem; }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 2.25rem 1.25rem 4rem; }
+    h1 { font-size: 2.35rem; margin: 0 0 .4rem; letter-spacing: -.025em; }
+    h2 { font-size: 1.28rem; margin: 2.35rem 0 .8rem; border-bottom: 1px solid var(--border); padding-bottom: .35rem; }
+    p.lead { color: var(--muted); font-size: 1.04rem; margin: 0 0 1.2rem; }
+    .badges { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: 1.1rem; }
+    .badge { font-family: ui-monospace, monospace; font-size: .76rem; padding: .2rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--muted); }
+    .badge.hi { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+    .links { display: flex; flex-wrap: wrap; gap: .8rem; margin-bottom: 1.75rem; font-size: .9rem; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .85rem; margin: 1.25rem 0; }
-    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
-    .kpi .k { font-size: .78rem; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .85rem; margin: 1.15rem 0; }
+    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: .95rem 1.05rem; }
+    .kpi .k { font-size: .76rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
     .kpi .v { font-family: ui-monospace, monospace; font-size: 1.45rem; font-weight: 700; margin: .2rem 0; }
-    .kpi .s { font-family: ui-monospace, monospace; font-size: .75rem; color: var(--good); }
-    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: .85rem; }
+    .kpi .s { font-family: ui-monospace, monospace; font-size: .74rem; color: var(--good); }
+
+    /* Live WASM Playground */
+    .playground { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.15rem 1.25rem; margin: 1.5rem 0; }
+    .pg-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; margin-bottom: .85rem; }
+    .pg-title { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: .55rem; }
+    .pg-status { font-family: ui-monospace, monospace; font-size: .76rem; padding: .2rem .55rem; border-radius: 999px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+    .pg-controls { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .9rem; }
+    button.btn {
+      font-family: ui-sans-serif, system-ui, sans-serif; font-size: .82rem; font-weight: 600;
+      padding: .42rem .78rem; border-radius: 7px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--fg); cursor: pointer; transition: border-color .15s, background .15s;
+    }
+    button.btn:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+    button.btn.primary { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+    button.btn:disabled { opacity: .5; cursor: not-allowed; }
+    .pg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: .6rem; margin-bottom: .85rem; }
+    .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .55rem .75rem; }
+    .stat .l { font-size: .71rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .stat .val { font-family: ui-monospace, monospace; font-size: .96rem; font-weight: 700; color: var(--fg); }
+    .stat .sub { font-family: ui-monospace, monospace; font-size: .71rem; color: var(--good); }
+    .canvas-box { position: relative; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--canvas-bg); margin-bottom: .65rem; }
+    canvas { display: block; width: 100%; cursor: crosshair; }
+    .legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .76rem; color: var(--muted); margin: .25rem 0 .6rem; font-family: ui-monospace, monospace; }
+    .legend span { display: inline-flex; align-items: center; gap: .35rem; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .pg-hint { font-size: .8rem; color: var(--muted); margin: .25rem 0 0; }
+    .bench-banner { display: none; margin-top: .75rem; padding: .75rem .9rem; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); font-family: ui-monospace, monospace; font-size: .82rem; }
+    .digest-box { display: none; margin-top: .75rem; }
+
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: .95rem 1.05rem; overflow-x: auto; font-size: .83rem; margin: .6rem 0 1rem; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    table { width: 100%; border-collapse: collapse; font-size: .84rem; font-family: ui-monospace, monospace; margin: 1rem 0; }
-    th, td { padding: .5rem .6rem; border-bottom: 1px solid var(--border); text-align: right; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; font-family: ui-monospace, monospace; margin: .9rem 0; }
+    th, td { padding: .48rem .55rem; border-bottom: 1px solid var(--border); text-align: right; }
     th:first-child, td:first-child { text-align: left; }
     th { color: var(--muted); font-weight: 600; }
     .good { color: var(--good); font-weight: 600; }
-    footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--border); font-size: .85rem; color: var(--muted); }
+    .cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+    footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--border); font-size: .84rem; color: var(--muted); }
   </style>
 </head>
 <body>
   <main class="wrap">
     <div class="badges">
-      <span class="badge">v0.2.0</span>
+      <span class="badge hi">v0.3.0</span>
       <span class="badge">Apache-2.0</span>
       <span class="badge">#![forbid(unsafe_code)]</span>
       <span class="badge">Exact O(log T) RTS Smoother</span>
-      <span class="badge">Zero-Copy Python</span>
+      <span class="badge">Native MCP Server</span>
+      <span class="badge">Live Rust WebAssembly</span>
     </div>
     <h1>backfold</h1>
     <p class="lead">
-      Persistent <code>O(log T)</code> associative-monoid engine for out-of-order, retractable, forkable online statistical inference, exact Rauch&ndash;Tung&ndash;Striebel (RTS) Bayesian smoothing &amp; marginal log-likelihood, and lossless-recoverable AI agent stream compression.
+      Persistent <code>O(log T)</code> associative-monoid engine for out-of-order, retractable, forkable online statistical inference, exact Rauch&ndash;Tung&ndash;Striebel (RTS) Bayesian smoothing &amp; changepoint localization, 106-bit streaming PCA, native MCP agent tooling, and <code>&lt;300</code>-token lossless-recoverable stream compression.
     </p>
     <div class="links">
-      <a href="https://github.com/pgg898200-ship-it/backfold">GitHub Repository</a>
-      <a href="./SUBNORMAL_KALMAN.md">Post-Mortem: Subnormal Traps &amp; Anchor-Centered RTS (MD)</a>
-      <a href="./llms.txt">llms.txt (Agent Index)</a>
-      <a href="./llms-full.txt">llms-full.txt (Full API)</a>
-      <a href="./results.json">Raw Benchmark JSON</a>
+      <a href="https://github.com/pgg898200-ship-it/backfold">GitHub Repo</a>
+      <a href="https://pypi.org/project/backfold/">PyPI (pip install backfold)</a>
+      <a href="./SUBNORMAL_KALMAN.md">Post-Mortem: Subnormals &amp; Anchor-Centered RTS</a>
+      <a href="./llms.txt">llms.txt</a>
+      <a href="./llms-full.txt">llms-full.txt</a>
+      <a href="./SKILL.md">SKILL.md</a>
+      <a href="./results.json">results.json</a>
     </div>
 
     <div class="grid">
-      <div class="kpi"><div class="k">RTS Kalman Smooth + log p(y) (T=100k Py)</div><div class="v">533,197&times;</div><div class="s">12.45 &micro;s vs 6.64 s NumPy RTS &middot; 1.16e-14 diff</div></div>
-      <div class="kpi"><div class="k">CT-EWMA / 1D Kalman / RTS (T=500k Rust)</div><div class="v">5,020&times; / 4,888&times; / 3,109&times;</div><div class="s">1.32 / 1.22 / 6.52 &micro;s vs -O3 seq Rust</div></div>
-      <div class="kpi"><div class="k">500-Stream Firehose (50 Loud Traps)</div><div class="v">0.0% FDR</div><div class="s">10/10 TP &middot; 0/50 loud FP (vs 84.1% naive)</div></div>
-      <div class="kpi"><div class="k">Agent Stream Digest</div><div class="v">2,510&times;</div><div class="s">~239 tok @100k &middot; 100% burst recall</div></div>
+      <div class="kpi"><div class="k">RTS Smooth + log p(y) (T=100k Py)</div><div class="v">578,868&times;</div><div class="s">11.12 &micro;s vs 6.44 s NumPy RTS &middot; 1.47e-14 diff</div></div>
+      <div class="kpi"><div class="k">Rust vs -O3 Seq Rust (T=500k)</div><div class="v">8,152&times; / 3,694&times;</div><div class="s">0.81 &micro;s EWMA &middot; 0.98 &micro;s K1D &middot; 5.37 &micro;s RTS</div></div>
+      <div class="kpi"><div class="k">500-Stream Firehose + 50 Traps</div><div class="v">0.0% FDR</div><div class="s">10/10 TP &middot; 0 FP in 107.4 ms (vs 84.1% naive)</div></div>
+      <div class="kpi"><div class="k">64-Agent Forks &amp; Agent Digest</div><div class="v">3,326&times; / 2,510&times;</div><div class="s">1.41 ms (64 forks) &middot; ~239 tok @100k &middot; MCP built-in</div></div>
     </div>
 
-    <h2>30-Second Quickstart</h2>
-    <pre><code>pip install backfold   # prebuilt wheels for Linux, macOS, Windows (Python 3.10-3.13)
+    <!-- LIVE REAL-RUST WEBASSEMBLY INTERACTIVE PLAYGROUND -->
+    <section class="playground" aria-label="Live WebAssembly Playground">
+      <div class="pg-head">
+        <div class="pg-title">
+          <span>Live In-Browser Rust WebAssembly Playground</span>
+          <span class="pg-status" id="wasmStatus">Loading backfold_wasm.wasm...</span>
+        </div>
+      </div>
 
-# Native CLI: 6 verified 100k-tick demos in 0.56 s
+      <div class="pg-controls">
+        <button class="btn primary" id="btnGlitch" disabled>Inject +15&sigma; Late Glitch @ t=6,666</button>
+        <button class="btn" id="btnRetract" disabled>Retract Tick @ t=6,666</button>
+        <button class="btn" id="btnShock" disabled>Move Regime Shock (Random Off-Grid Tick)</button>
+        <button class="btn primary" id="btnBench" disabled>Benchmark YOUR Browser (WASM vs JS Seq RTS)</button>
+        <button class="btn" id="btnDigest" disabled>Live &lt;300-Token Agent Digest</button>
+        <button class="btn" id="btnReset" disabled>Reset</button>
+      </div>
+
+      <div class="pg-stats">
+        <div class="stat">
+          <div class="l">Last WASM O(log T) Op</div>
+          <div class="val" id="stLatency">--</div>
+          <div class="sub" id="stOpNote">20,000-tick FoldTree&lt;KalmanFilter2D, 4&gt;</div>
+        </div>
+        <div class="stat">
+          <div class="l">Exact Marginal log p(y)</div>
+          <div class="val" id="stLogLik">--</div>
+          <div class="sub">O(1) at root &middot; Anchor-Centered</div>
+        </div>
+        <div class="stat">
+          <div class="l">Localized Shock (Zero-Blind-Spot)</div>
+          <div class="val" id="stCp">--</div>
+          <div class="sub" id="stCpBf">Cached-subtree scan + exact logBF</div>
+        </div>
+        <div class="stat">
+          <div class="l">Smoothed State @ Query t</div>
+          <div class="val" id="stSmooth">--</div>
+          <div class="sub" id="stQueryT">Click chart to edit / Shift+Click to retract</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span><i class="dot" style="background:#64748b"></i>Raw obs (20,000 ticks)</span>
+        <span><i class="dot" style="background:#f59e0b"></i>Kalman Filtered</span>
+        <span><i class="dot" style="background:#2dd4bf"></i>Exact O(log T) RTS Smoother (&plusmn;2&sigma;)</span>
+        <span><i class="dot" style="background:#fb7185"></i>Localized Bayesian Changepoint</span>
+      </div>
+
+      <div class="canvas-box">
+        <canvas id="trajCanvas" height="270"></canvas>
+      </div>
+      <div class="canvas-box">
+        <canvas id="bfCanvas" height="110"></canvas>
+      </div>
+      <p class="pg-hint">
+        Running real compiled Rust <code>backfold-core</code> (<code>backfold_wasm.wasm</code>, zero backend server). <strong>Click anywhere on the top plot</strong> to inject a late-arriving sensor reading; <strong>Shift+Click</strong> to retract that tick into a missing-observation transition step.
+      </p>
+
+      <div class="bench-banner" id="benchBanner"></div>
+      <div class="digest-box" id="digestBox">
+        <pre><code id="digestCode"></code></pre>
+      </div>
+    </section>
+
+    <h2>30-Second Quickstart &amp; Native MCP Server</h2>
+    <div class="cols2">
+      <div>
+        <strong>Python &amp; Native CLI</strong>
+        <pre><code>pip install backfold   # Linux, macOS, Windows (Py 3.10-3.13)
+
+# 7 live verified 100k-tick demos in 0.54 s
 backfold demo
 backfold digest stream.csv --value-col 1 --top-k 5
-backfold drill  stream.csv --start 22498 --end 22507</code></pre>
+backfold drill  stream.csv --start 22498 --end 22507
+backfold bench</code></pre>
+      </div>
+      <div>
+        <strong>Zero-Dependency Stdio MCP Server (Claude / Cursor / Codex)</strong>
+        <pre><code>{
+  "mcpServers": {
+    "backfold": {
+      "command": "backfold",
+      "args": ["mcp"]
+    }
+  }
+}</code></pre>
+      </div>
+    </div>
+    <p style="font-size:.88rem;color:var(--muted);margin-top:-.25rem;">
+      Built-in MCP tools (sub-1 MB native binary, zero Python/Node runtime required): <code>backfold_digest_csv</code>, <code>backfold_drill_csv</code>, <code>backfold_kalman_rts_csv</code> (with automatic changepoint shock localization), <code>backfold_covariance_pca_csv</code>, and <code>backfold_ebh_sift_csv</code>.
+    </p>
 
-    <h2>Verified Live Benchmarks (<code>max |diff| &le; 1e-12</code> vs. Sequential Oracles)</h2>
+    <h2>Verified Live Benchmarks (<code>v0.3.0</code>, <code>max |diff| &le; 1e-12</code> vs. Sequential Oracles)</h2>
     <table>
       <thead>
-        <tr><th>Operator (T = 100,000 late edit)</th><th>backfold Py</th><th>Ecosystem Baseline</th><th>Speedup</th><th>Rust vs -O3 Rust</th></tr>
+        <tr><th>Operator (T = 100,000 late edit)</th><th>backfold Py</th><th>Ecosystem Baseline</th><th>Python Speedup</th><th>Rust vs -O3 Seq Rust</th></tr>
       </thead>
       <tbody>
-        <tr><td>2D Kalman RTS Smooth + log p(y)</td><td>12.45 &micro;s</td><td>6,637,232 &micro;s (NumPy RTS)</td><td class="good">533,197&times;</td><td class="good">639&times; (3,109&times; @500k)</td></tr>
-        <tr><td>2D Constant-Velocity Kalman</td><td>9.32 &micro;s</td><td>4,737,933 &micro;s (NumPy seq)</td><td class="good">508,471&times;</td><td class="good">719&times; (3,260&times; @500k)</td></tr>
-        <tr><td>Page CUSUM + O(log T) 1st Alarm</td><td>5.35 &micro;s</td><td>134,250 &micro;s (Py seq)</td><td class="good">25,075&times;</td><td class="good">276&times; (1,372&times; @500k)</td></tr>
-        <tr><td>CT Irregular-&Delta;t EWMA</td><td>4.79 &micro;s</td><td>4,967 &micro;s Pandas / 1,905 &micro;s NumPy</td><td class="good">1,037&times; / 398&times;</td><td class="good">1,016&times; (5,020&times; @500k)</td></tr>
-        <tr><td>8D Compensated Covariance</td><td>15.51 &micro;s</td><td>5,368 &micro;s (NumPy cov)</td><td class="good">346&times;</td><td class="good">234&times;</td></tr>
-        <tr><td>8D Discounted Ridge (delayed label)</td><td>17.68 &micro;s</td><td>6,261 &micro;s SciPy / 97,574 &micro;s River@10k</td><td class="good">354&times; / 6,460&times;</td><td class="good">640&times;</td></tr>
-        <tr><td>106-bit Compensated Moments</td><td>10.51 &micro;s</td><td>1,276 &micro;s Pandas / 806 &micro;s NumPy / 263 &micro;s Polars</td><td class="good">121&times; / 77&times; / 25&times;</td><td class="good">88&times; (414&times; @500k)</td></tr>
+        <tr><td>2D Kalman RTS Smooth + log p(y)</td><td>11.12 &micro;s</td><td>6,437,010 &micro;s (NumPy RTS)</td><td class="good">578,868&times;</td><td class="good">760&times; (3,694&times; @500k)</td></tr>
+        <tr><td>2D Constant-Velocity Kalman</td><td>8.82 &micro;s</td><td>4,563,614 &micro;s (NumPy seq)</td><td class="good">517,710&times;</td><td class="good">760&times; (3,538&times; @500k)</td></tr>
+        <tr><td>Page CUSUM + O(log T) 1st Alarm</td><td>3.83 &micro;s</td><td>137,450 &micro;s (Py seq)</td><td class="good">35,897&times;</td><td class="good">454&times; (2,177&times; @500k)</td></tr>
+        <tr><td>CT Irregular-&Delta;t EWMA</td><td>3.92 &micro;s</td><td>4,832 &micro;s Pandas / 1,941 &micro;s NumPy</td><td class="good">1,231&times; / 495&times;</td><td class="good">1,736&times; (8,152&times; @500k)</td></tr>
+        <tr><td>1D Random-Walk Kalman</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td class="good">1,338&times; (6,185&times; @500k)</td></tr>
+        <tr><td>8D Compensated Covariance &amp; PCA</td><td>15.60 &micro;s</td><td>5,589 &micro;s (NumPy cov)</td><td class="good">358&times;</td><td class="good">262&times; (5.68 &micro;s @100k)</td></tr>
+        <tr><td>8D Discounted Ridge (delayed label)</td><td>16.95 &micro;s</td><td>5,921 &micro;s SciPy / 103,981 &micro;s River@10k</td><td class="good">349&times; / 7,092&times;</td><td class="good">659&times; (6.11 &micro;s @100k)</td></tr>
+        <tr><td>106-bit Compensated Moments</td><td>6.06 &micro;s</td><td>1,293 &micro;s Pandas / 730 &micro;s NumPy / 273 &micro;s Polars</td><td class="good">213&times; / 121&times; / 45&times;</td><td class="good">259&times; (1,288&times; @500k)</td></tr>
+        <tr><td>Arbitrary 60% Range Query (Moments)</td><td>8.57 &micro;s</td><td>35.54 &micro;s (NumPy slice)</td><td class="good">4.1&times;</td><td class="good">154&times; (664&times; @500k)</td></tr>
       </tbody>
     </table>
 
     <h2>Honest Crossover</h2>
     <p>
-      For strictly append-only, single-pass, in-order aggregation with zero retractions, zero late arrivals, zero range queries, and zero branching, a plain sequential loop wins on initial ingest. On <code>MomentsMonoid</code>, bulk tree build (<code>10.2 ms</code> @ 100k, <code>47.9 ms</code> @ 500k) breaks even against a single-pass <code>-O3</code> Rust loop after <strong>31&ndash;34 late edits or range queries</strong>.
+      For strictly append-only, single-pass, in-order aggregation with zero retractions, zero late arrivals, zero range queries, and zero branching, a plain sequential loop wins on initial ingest. On <code>MomentsMonoid</code>, bulk tree build (<code>9.99 ms</code> @ 100k, <code>51.07 ms</code> @ 500k) breaks even against a single-pass <code>-O3</code> Rust loop after <strong>31&ndash;33 late edits or range queries</strong>.
     </p>
 
     <footer>
-      Apache-2.0 &middot; Pure Markdown docs for AI agents: <a href="./llms.txt">/llms.txt</a> &middot; <a href="./llms-full.txt">/llms-full.txt</a>
+      Apache-2.0 &middot; AI agent discovery: <a href="./llms.txt">/llms.txt</a> &middot; <a href="./llms-full.txt">/llms-full.txt</a> &middot; <a href="./SKILL.md">/SKILL.md</a> &middot; <a href="./robots.txt">/robots.txt</a> &middot; <a href="./sitemap.xml">/sitemap.xml</a>
     </footer>
   </main>
+
+  <script>
+  (() => {
+    const N = 20000;
+    let wasm = null;
+    let lastSnap = null;
+    let lastEditedT = null;
+    let currentShockT = 10000;
+    let currentSeed = 42;
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+
+    const $ = id => document.getElementById(id);
+    const trajCanvas = $("trajCanvas");
+    const bfCanvas = $("bfCanvas");
+
+    function wasmExec(obj) {
+      const bytes = enc.encode(JSON.stringify(obj));
+      const ptr = wasm.bf_alloc(bytes.length);
+      new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
+      const packed = wasm.bf_exec(ptr, bytes.length);
+      wasm.bf_dealloc(ptr, bytes.length);
+      const outPtr = Number(packed & 0xffffffffn);
+      const outLen = Number(packed >> 32n);
+      const str = dec.decode(new Uint8Array(wasm.memory.buffer, outPtr, outLen));
+      wasm.bf_dealloc(outPtr, outLen);
+      return JSON.parse(str);
+    }
+
+    // Exact handwritten JS sequential forward-backward 2D CV RTS smoother (identical math to Rust oracle)
+    function jsSeqRts2D(ys, retracted, qAccel, rObs, m0, p0, queryT) {
+      const LN_TAU = 1.8378770664093453;
+      const n = ys.length;
+      const keep = n - queryT;
+      const mf0 = new Float64Array(keep), mf1 = new Float64Array(keep);
+      const pf0 = new Float64Array(keep), pf1 = new Float64Array(keep), pf3 = new Float64Array(keep);
+      const mp0a = new Float64Array(keep), mp1a = new Float64Array(keep);
+      const pp0a = new Float64Array(keep), pp1a = new Float64Array(keep), pp3a = new Float64Array(keep);
+
+      let m0v = m0[0], m1v = m0[1];
+      let p00 = p0[0], p01 = p0[1], p11 = p0[3];
+      const q00 = qAccel / 3.0, q01 = qAccel / 2.0, q11 = qAccel;
+      let logLik = 0.0;
+
+      for (let k = 0; k < n; k++) {
+        const mp0 = m0v + m1v;
+        const mp1 = m1v;
+        const pp00 = p00 + 2.0 * p01 + p11 + q00;
+        const pp01 = p01 + p11 + q01;
+        const pp11 = p11 + q11;
+
+        if (retracted[k]) {
+          m0v = mp0; m1v = mp1;
+          p00 = pp00; p01 = pp01; p11 = pp11;
+        } else {
+          const s = pp00 + rObs;
+          const innov = ys[k] - mp0;
+          logLik += -0.5 * (LN_TAU + Math.log(s) + (innov * innov) / s);
+          const k0 = pp00 / s, k1 = pp01 / s;
+          m0v = mp0 + k0 * innov;
+          m1v = mp1 + k1 * innov;
+          const a00 = 1.0 - k0;
+          p00 = a00 * a00 * pp00 + k0 * k0 * rObs;
+          p01 = a00 * (pp01 - k1 * pp00) + k0 * k1 * rObs;
+          p11 = pp11 - 2.0 * k1 * pp01 + k1 * k1 * s;
+        }
+        if (k >= queryT) {
+          const j = k - queryT;
+          mp0a[j] = mp0; mp1a[j] = mp1;
+          pp0a[j] = pp00; pp1a[j] = pp01; pp3a[j] = pp11;
+          mf0[j] = m0v; mf1[j] = m1v;
+          pf0[j] = p00; pf1[j] = p01; pf3[j] = p11;
+        }
+      }
+
+      let ms0 = mf0[keep - 1], ms1 = mf1[keep - 1];
+      let ps0 = pf0[keep - 1], ps1 = pf1[keep - 1], ps3 = pf3[keep - 1];
+      for (let j = keep - 2; j >= 0; j--) {
+        const pp00 = pp0a[j + 1], pp01 = pp1a[j + 1], pp11 = pp3a[j + 1];
+        const invDet = 1.0 / (pp00 * pp11 - pp01 * pp01);
+        const ip00 = pp11 * invDet, ip01 = -pp01 * invDet, ip11 = pp00 * invDet;
+        const pft00 = pf0[j] + pf1[j], pft01 = pf1[j], pft10 = pf1[j] + pf3[j], pft11 = pf3[j];
+        const g00 = pft00 * ip00 + pft01 * ip01;
+        const g01 = pft00 * ip01 + pft01 * ip11;
+        const g10 = pft10 * ip00 + pft11 * ip01;
+        const g11 = pft10 * ip01 + pft11 * ip11;
+        const dm0 = ms0 - mp0a[j + 1], dm1 = ms1 - mp1a[j + 1];
+        ms0 = mf0[j] + g00 * dm0 + g01 * dm1;
+        ms1 = mf1[j] + g10 * dm0 + g11 * dm1;
+        const dp00 = ps0 - pp00, dp01 = ps1 - pp01, dp11 = ps3 - pp11;
+        const t00 = g00 * dp00 + g01 * dp01, t01 = g00 * dp01 + g01 * dp11;
+        const t10 = g10 * dp00 + g11 * dp01, t11 = g10 * dp01 + g11 * dp11;
+        ps0 = pf0[j] + t00 * g00 + t01 * g01;
+        ps1 = pf1[j] + 0.5 * ((t00 * g10 + t01 * g11) + (t10 * g00 + t11 * g01));
+        ps3 = pf3[j] + t10 * g10 + t11 * g11;
+      }
+      return { mean: [ms0, ms1], cov: [ps0, ps1, ps1, ps3], logLik };
+    }
+
+    function cssVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function sizeCanvas(canvas, cssH) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = canvas.parentElement.clientWidth;
+      canvas.width = Math.max(300, Math.floor(w * dpr));
+      canvas.height = Math.floor(cssH * dpr);
+      canvas.style.height = cssH + "px";
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { ctx, w, h: cssH };
+    }
+
+    function render(snap, latencyLabel) {
+      lastSnap = snap;
+      if (latencyLabel) $("stLatency").textContent = latencyLabel;
+      $("stLogLik").textContent = snap.log_marginal_likelihood.toFixed(2);
+      $("stCp").textContent = "t = " + snap.best_changepoint_t.toLocaleString();
+      $("stCpBf").textContent = "logBF = " + (snap.best_log_bf >= 0 ? "+" : "") + snap.best_log_bf.toFixed(1) + " (exact shock test)";
+      $("stSmooth").textContent = snap.query_smooth_mean[0].toFixed(2) + " ± " + Math.sqrt(Math.max(0, snap.query_smooth_cov[0])).toFixed(2);
+      $("stQueryT").textContent = "Query t=" + snap.query_t.toLocaleString() + " | vel=" + snap.query_smooth_mean[1].toFixed(4);
+
+      // 1. Top Trajectory Canvas
+      const { ctx, w, h } = sizeCanvas(trajCanvas, 270);
+      const pad = { l: 52, r: 16, t: 16, b: 28 };
+      const pw = w - pad.l - pad.r;
+      const ph = h - pad.t - pad.b;
+
+      let yMin = Infinity, yMax = -Infinity;
+      for (const p of snap.plot) {
+        yMin = Math.min(yMin, p.y, p.smoothed - 2 * p.smooth_std, p.filtered);
+        yMax = Math.max(yMax, p.y, p.smoothed + 2 * p.smooth_std, p.filtered);
+      }
+      const yPad = (yMax - yMin) * 0.12 || 2.0;
+      yMin -= yPad; yMax += yPad;
+      snap._bounds = { pad, pw, ph, yMin, yMax };
+
+      const tx = t => pad.l + (t / (snap.n - 1)) * pw;
+      const ty = y => pad.t + (1 - (y - yMin) / (yMax - yMin)) * ph;
+
+      ctx.fillStyle = cssVar("--canvas-bg");
+      ctx.fillRect(0, 0, w, h);
+
+      // Grid
+      ctx.strokeStyle = cssVar("--grid");
+      ctx.lineWidth = 1;
+      ctx.font = "11px ui-monospace, monospace";
+      ctx.fillStyle = cssVar("--muted");
+      for (let g = 0; g <= 4; g++) {
+        const yv = yMin + (g / 4) * (yMax - yMin);
+        const yy = ty(yv);
+        ctx.beginPath(); ctx.moveTo(pad.l, yy); ctx.lineTo(w - pad.r, yy); ctx.stroke();
+        ctx.fillText(yv.toFixed(1), 6, yy + 4);
+      }
+      for (let g = 0; g <= 4; g++) {
+        const tv = Math.round((g / 4) * (snap.n - 1));
+        const xx = tx(tv);
+        ctx.beginPath(); ctx.moveTo(xx, pad.t); ctx.lineTo(xx, h - pad.b); ctx.stroke();
+        ctx.fillText(tv.toLocaleString(), Math.min(w - 48, Math.max(pad.l, xx - 16)), h - 8);
+      }
+
+      // Localized Changepoint line
+      const cpX = tx(snap.best_changepoint_t);
+      ctx.strokeStyle = "rgba(251, 113, 133, 0.85)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(cpX, pad.t); ctx.lineTo(cpX, h - pad.b); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // ±2σ RTS uncertainty band
+      ctx.fillStyle = "rgba(45, 212, 191, 0.18)";
+      ctx.beginPath();
+      snap.plot.forEach((p, i) => {
+        const x = tx(p.t), y = ty(p.smoothed + 2 * p.smooth_std);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      for (let i = snap.plot.length - 1; i >= 0; i--) {
+        const p = snap.plot[i];
+        ctx.lineTo(tx(p.t), ty(p.smoothed - 2 * p.smooth_std));
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // Raw observations
+      ctx.fillStyle = "rgba(100, 116, 139, 0.55)";
+      for (const p of snap.plot) {
+        if (p.retracted) continue;
+        ctx.beginPath();
+        ctx.arc(tx(p.t), ty(p.y), 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Filtered curve (dashed amber)
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      snap.plot.forEach((p, i) => {
+        const x = tx(p.t), y = ty(p.filtered);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Exact RTS Smoothed curve (solid teal)
+      ctx.strokeStyle = "#2dd4bf";
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      snap.plot.forEach((p, i) => {
+        const x = tx(p.t), y = ty(p.smoothed);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Highlight user-edited tick
+      if (lastEditedT !== null) {
+        const ex = tx(lastEditedT);
+        ctx.strokeStyle = "#fbbf24";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(ex, pad.t); ctx.lineTo(ex, h - pad.b); ctx.stroke();
+      }
+
+      // 2. Bottom Bayesian Changepoint Profile Canvas
+      const b = sizeCanvas(bfCanvas, 110);
+      const bctx = b.ctx, bw = b.w, bh = b.h;
+      const bpad = { l: 52, r: 16, t: 18, b: 22 };
+      const bpw = bw - bpad.l - bpad.r;
+      const bph = bh - bpad.t - bpad.b;
+
+      bctx.fillStyle = cssVar("--canvas-bg");
+      bctx.fillRect(0, 0, bw, bh);
+      bctx.font = "11px ui-monospace, monospace";
+      bctx.fillStyle = cssVar("--muted");
+      bctx.fillText("Bayesian Shock Evidence (logBF / excess NLL) — peak @ t=" + snap.best_changepoint_t.toLocaleString(), bpad.l, 13);
+
+      let maxBf = 10.0;
+      for (const s of snap.scan) maxBf = Math.max(maxBf, s.log_bf);
+      const zeroY = bpad.t + bph;
+      bctx.strokeStyle = cssVar("--grid");
+      bctx.beginPath(); bctx.moveTo(bpad.l, zeroY); bctx.lineTo(bw - bpad.r, zeroY); bctx.stroke();
+
+      const barW = Math.max(3, bpw / snap.scan.length - 1.5);
+      for (const s of snap.scan) {
+        const val = Math.max(0, s.log_bf);
+        const bhVal = (val / maxBf) * bph;
+        const bx = bpad.l + (s.t / (snap.n - 1)) * bpw - barW / 2;
+        const isPeak = Math.abs(s.t - snap.best_changepoint_t) < snap.n / snap.scan.length;
+        bctx.fillStyle = isPeak ? "#fb7185" : "rgba(56, 189, 248, 0.55)";
+        bctx.fillRect(bx, zeroY - bhVal, barW, bhVal);
+      }
+      bctx.fillStyle = cssVar("--muted");
+      bctx.fillText(maxBf.toFixed(0), 6, bpad.t + 8);
+      bctx.fillText("0", 6, zeroY + 4);
+    }
+
+    function initStream(shockT, seed) {
+      currentShockT = shockT;
+      currentSeed = seed;
+      lastEditedT = null;
+      const t0 = performance.now();
+      const snap = wasmExec({
+        cmd: "init", n: N, seed, shock_t: shockT, shock_step: 7.5, shock_vel: 0.0022,
+        q_accel: 1e-3, r_obs: 0.25, n_plot: 160, n_scan: 64
+      });
+      const dtMs = performance.now() - t0;
+      render(snap, dtMs.toFixed(1) + " ms (bulk build 20k)");
+      $("stOpNote").textContent = "O(T) initial FoldTree build + 160-pt RTS + changepoint scan";
+    }
+
+    trajCanvas.addEventListener("click", (ev) => {
+      if (!wasm || !lastSnap || !lastSnap._bounds) return;
+      const rect = trajCanvas.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      const { pad, pw, ph, yMin, yMax } = lastSnap._bounds;
+      const fracX = Math.max(0, Math.min(1, (x - pad.l) / pw));
+      const fracY = Math.max(0, Math.min(1, 1 - (y - pad.t) / ph));
+      const t = Math.round(fracX * (N - 1));
+      const yVal = yMin + fracY * (yMax - yMin);
+      lastEditedT = t;
+      const t0 = performance.now();
+      const snap = ev.shiftKey
+        ? wasmExec({ cmd: "retract", t, query_t: t, n_plot: 160, n_scan: 64 })
+        : wasmExec({ cmd: "upsert", t, y: yVal, query_t: t, n_plot: 160, n_scan: 64 });
+      const dtMs = performance.now() - t0;
+      render(snap, dtMs.toFixed(2) + " ms (edit+redraw)");
+      $("stOpNote").textContent = ev.shiftKey
+        ? ("Retracted t=" + t.toLocaleString() + " into missing-obs transition")
+        : ("Late edit @ t=" + t.toLocaleString() + " -> y=" + yVal.toFixed(2));
+    });
+
+    $("btnGlitch").addEventListener("click", () => {
+      lastEditedT = 6666;
+      const t0 = performance.now();
+      const basePt = lastSnap.plot.find(p => p.t >= 6666) || lastSnap.plot[0];
+      const snap = wasmExec({ cmd: "upsert", t: 6666, y: basePt.smoothed + 15.0, query_t: 6666, n_plot: 160, n_scan: 64 });
+      const dtMs = performance.now() - t0;
+      render(snap, dtMs.toFixed(2) + " ms (upsert+160 RTS)");
+      $("stOpNote").textContent = "Injected +15σ late glitch @ t=6,666 (click Benchmark for pure O(log T) µs)";
+    });
+
+    $("btnRetract").addEventListener("click", () => {
+      lastEditedT = 6666;
+      const t0 = performance.now();
+      const snap = wasmExec({ cmd: "retract", t: 6666, query_t: 6666, n_plot: 160, n_scan: 64 });
+      const dtMs = performance.now() - t0;
+      render(snap, dtMs.toFixed(2) + " ms (retract+160 RTS)");
+      $("stOpNote").textContent = "Retracted t=6,666 -> exact missing-observation bridge in O(log T)";
+    });
+
+    $("btnShock").addEventListener("click", () => {
+      const nextT = 2500 + Math.floor(Math.random() * 15000);
+      initStream(nextT, currentSeed + 7);
+      $("stOpNote").textContent = "True shock placed at random off-grid t=" + nextT.toLocaleString() + " -> localized t=" + lastSnap.best_changepoint_t.toLocaleString();
+    });
+
+    $("btnReset").addEventListener("click", () => {
+      $("benchBanner").style.display = "none";
+      $("digestBox").style.display = "none";
+      initStream(10000, 42);
+    });
+
+    $("btnBench").addEventListener("click", () => {
+      const raw = wasmExec({ cmd: "get_raw" });
+      const reps = 120;
+      const queryT = 10000;
+      const tW0 = performance.now();
+      const wRes = wasmExec({ cmd: "bench_edit", t: 6666, y_alt: raw.ys[6666] + 12.0, query_t: queryT, reps });
+      const wasmUs = ((performance.now() - tW0) * 1000) / reps;
+
+      // Time 3 runs of exact JS sequential forward-backward RTS smoother
+      const jsRuns = 3;
+      const tJ0 = performance.now();
+      let jRes = null;
+      for (let r = 0; r < jsRuns; r++) {
+        jRes = jsSeqRts2D(raw.ys, raw.retracted, raw.q_accel, raw.r_obs, raw.m0, raw.p0, queryT);
+      }
+      const jsUs = ((performance.now() - tJ0) * 1000) / jsRuns;
+      const speedup = jsUs / Math.max(wasmUs, 1e-6);
+
+      const maxMeanDiff = Math.max(
+        Math.abs(wRes.smooth_mean[0] - jRes.mean[0]),
+        Math.abs(wRes.smooth_mean[1] - jRes.mean[1])
+      );
+      const llRelDiff = Math.abs(wRes.log_marginal_likelihood - jRes.logLik) / Math.max(1, Math.abs(jRes.logLik));
+      const maxDiff = Math.max(maxMeanDiff, llRelDiff);
+
+      $("stLatency").textContent = wasmUs.toFixed(1) + " µs / edit";
+      $("stOpNote").textContent = speedup.toFixed(0) + "× faster than JS seq RTS right in your browser!";
+      const banner = $("benchBanner");
+      banner.style.display = "block";
+      banner.innerHTML =
+        `<strong>LIVE BROWSER BENCHMARK (T = 20,000 ticks, late edit + RTS smooth @10k + exact log p(y)):</strong><br/>` +
+        `backfold Rust WASM: <strong>${wasmUs.toFixed(2)} &micro;s</strong> &nbsp;|&nbsp; ` +
+        `Handwritten JS Seq RTS: <strong>${(jsUs / 1000).toFixed(2)} ms</strong> &nbsp;|&nbsp; ` +
+        `Speedup: <strong style="color:var(--good)">${speedup.toFixed(0)}&times; faster</strong> &nbsp;|&nbsp; ` +
+        `Exact Parity max |diff|: <strong>${maxDiff.toExponential(2)}</strong>`;
+    });
+
+    $("btnDigest").addEventListener("click", () => {
+      const box = $("digestBox");
+      if (box.style.display === "block") {
+        box.style.display = "none";
+        return;
+      }
+      const t0 = performance.now();
+      const dig = wasmExec({ cmd: "digest", top_k: 4, threshold: 12.0 });
+      const ms = performance.now() - t0;
+      $("digestCode").textContent =
+        `/* Generated live in browser WASM in ${ms.toFixed(1)} ms: ` +
+        `${dig.raw_approx_tokens.toLocaleString()} raw tok -> ${dig.digest_approx_tokens} tok ` +
+        `(${dig.compression_ratio.toFixed(1)}x compression) */\n\n` + dig.markdown;
+      box.style.display = "block";
+    });
+
+    async function boot() {
+      try {
+        let inst;
+        const resp = await fetch("./backfold_wasm.wasm");
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        try {
+          inst = (await WebAssembly.instantiateStreaming(resp.clone(), {})).instance;
+        } catch (_) {
+          const buf = await resp.arrayBuffer();
+          inst = (await WebAssembly.instantiate(buf, {})).instance;
+        }
+        wasm = inst.exports;
+        $("wasmStatus").textContent = "WASM Live · 20,000 ticks";
+        ["btnGlitch", "btnRetract", "btnShock", "btnBench", "btnDigest", "btnReset"].forEach(id => {
+          $(id).disabled = false;
+        });
+        initStream(10000, 42);
+      } catch (err) {
+        $("wasmStatus").textContent = "WASM offline (" + err.message + ")";
+      }
+    }
+
+    window.addEventListener("resize", () => {
+      if (lastSnap) render(lastSnap);
+    });
+    boot();
+  })();
+  </script>
 </body>
 </html>

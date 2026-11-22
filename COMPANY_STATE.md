@@ -43,11 +43,25 @@ Audited existing open-source streaming and online statistics tooling:
 - **Root fix (Anchor-Centered Associative Gaussian Potentials):** Attached a coordinate-aligned input anchor $r$ satisfying $(F^\top h)^\top r = y$ so leaf $\tilde{z} = -\frac{1}{2}(\ln 2\pi + \ln S)$, $\tilde{\eta} = 0$, and block combines operate strictly on $\delta = b_1 - r_2 = O(1)$. Relative log-likelihood error at `T = 100k` plunged **2,500,000×** from `2.86e-9 → 1.14e-15` (and stays `1.04e-12` even at `1e6` offset!). Live speedup: **`533,197×`** vs NumPy RTS at `T = 100k` (`12.45 µs` vs `6.64 s`, `max |diff| = 1.16e-14`) and **`3,109×`** vs `-O3` sequential Rust RTS at `T = 500k` (`6.52 µs` vs `20.26 ms`).
 - **Multivariate `CovarianceMonoid` / `CovarianceStream`:** Pébay centered cross-product merge with 106-bit Knuth TwoSum mean vector, inline zero-alloc `dim <= 8` storage, arbitrary range correlation, and Jacobi-equilibrated Cholesky squared Mahalanobis scoring (`mahalanobis_sq`, factored batch `mahalanobis_many`). Live speedup: **`346×`** vs `np.cov` (`15.51 µs`, `max |diff| = 6.66e-16`) and **`234×`** vs `-O3` sequential Rust (`5.69 µs`).
 
-## 3. Verified Quality Gate Status (`v0.2.0`)
+### Iteration 6 (`v0.3.0`) — Pareto `B = 4` Tuning, Single-Pass `split_summary`, Zero-Cancellation Bayesian Changepoints, Streaming PCA, Native MCP Server & Live WebAssembly Playground
+- **Empirical Silicon Branching-Factor Tuning + Single-Pass `split_summary` + Singleton `MomentsMonoid::combine_assign`:** Benchmarked `B in {2, 4, 8, 16, 32}` across all 7 monoids on live silicon (`T = 100k`). Discovered `B = 4` is the global Pareto optimum (cutting combines per upsert by `2.78×` vs `B = 16` without `B = 2`'s `3.7×` heap-allocation build penalty). Combined with single-pass `FoldTree::split_summary` and direct `KalmanFilter2D::posterior`/`log_prior_coupling`:
+  - **CT-EWMA @ 500k Rust:** `1.32 µs` (`5,020×`) → **`0.806 µs` (`8,152×` vs `-O3` seq Rust!)**
+  - **1D Kalman @ 500k Rust:** `1.22 µs` (`4,888×`) → **`0.979 µs` (`6,185×` vs `-O3` seq Rust!)**
+  - **2D RTS Smoother + $\log p(y)$:** `12.45 µs` (`533,197×`) → **`11.12 µs` (`578,868×` vs NumPy RTS)**; Rust @ 500k: `6.52 µs` (`3,109×`) → **`5.37 µs` (`3,694×`)**
+  - **Page CUSUM + 1st Alarm:** `5.35 µs` (`25,075×`) → **`3.83 µs` (`35,897×` vs Py seq)**; Rust @ 500k: `1.89 µs` (`1,372×`) → **`1.18 µs` (`2,177×`)**
+  - **Compensated Moments:** `10.51 µs` → **`6.06 µs` (`213×` Pandas, `121×` NumPy, `45×` Polars)**; Rust @ 500k: `3.77 µs` (`414×`) → **`1.28 µs` (`1,288×`, 3.1× faster!)**
+- **Zero-Cancellation Bayesian Changepoint Bayes Factors + Cached-Subtree Locator (`locate_changepoint`):** Derived exact `log_prior_coupling` differencing cancelling `right.log_z` algebraically to zero (eliminating cancellation at arbitrary `T` and supporting translation-invariant state-shock tests `P_f + Q_jump`). Caught & fixed coarse-grid blind spots by adding zero-combine `FoldTree::scan_cached_subtrees`, pinpointing arbitrary shocks at `+1e6` offset on `T = 50k–100k` to the exact tick in **`0.39–0.55 ms`**.
+- **Pure-Safe Cyclic-Jacobi Streaming PCA (`CovarianceStream.pca` / `range_pca`):** Zero external BLAS/LAPACK, exact to `<1e-11` even at `1e12` DC offset (`27.5 µs` for 6D range PCA).
+- **GIL-Free Python (`py.allow_threads`) + Single-Call `sift_streams`:** Cut 500-channel e-BH firehose latency from `259 ms → 107.4 ms` (`TP = 10/10, FP = 0, FDR = 0.000`).
+- **Zero-Dependency Native Stdio MCP Server (`backfold mcp`):** 5 built-in CSV streaming tools verified end-to-end via piped JSON-RPC 2.0 integration test (`mcp_integration.rs`).
+- **Live Real-Rust WebAssembly Playground (`crates/backfold-wasm` → GitHub Pages):** Zero JS build-tool lock-in (`372 KB` raw `.wasm`), verified in V8 at **`7.8 µs` vs `28.13 ms` JS seq RTS (`3,606×` faster, `max |diff| = 5.85e-15`)**.
 
-- `cargo test --package backfold-core --package backfold-cli --release`: **13/13** unit + **9/9** Breaker audit tests passed.
+## 3. Verified Quality Gate Status (`v0.3.0`)
+
+- `cargo test --workspace --release --exclude backfold-py`: **17/17** core unit + **9/9** Breaker audit + **1/1** 5-tool MCP integration + **1/1** WASM session (**28/28 passed**).
 - `cargo clippy --workspace --all-targets -- -D warnings`: **0 warnings**.
-- `pytest -v tests/`: **14/14** passed.
+- `pytest -v tests/`: **17/17** passed (including streaming PCA at `1e12`, changepoint Bayes factor + `locate_changepoint`, `sift_streams`, and 4-thread GIL-free concurrency).
 - `ruff check python/ benchmarks/ tests/ examples/`: **All checks passed**.
-- Runnable examples (`examples/kalman_rts_smoothing.py`, `examples/multivariate_anomaly_cov.py`, `examples/polars_late_arrivals.py`): **3/3 passed**.
+- Runnable examples: **4/4 passed**.
 - Canonical machine-readable receipt: [`benchmarks/results.json`](benchmarks/results.json).
+

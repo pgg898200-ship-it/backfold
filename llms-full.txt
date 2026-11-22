@@ -1,8 +1,8 @@
-# backfold — Complete Technical Reference for AI Agents & Engineers
+# backfold — Complete Technical Reference for AI Agents & Engineers (`v0.3.0`)
 
-> Apache-2.0 | Pure safe Rust (`#![forbid(unsafe_code)]`) | Zero-copy Python bindings (PyO3 + PEP-3118 buffers) | Sub-10ms native CLI
+> Apache-2.0 | Pure safe Rust (`#![forbid(unsafe_code)]`) | Zero-copy GIL-free Python bindings (PyO3 + PEP-3118) | Sub-5ms native CLI & MCP server | WebAssembly (`backfold-wasm`)
 
-`backfold` is a persistent $O(\log T)$ associative-monoid streaming inference engine and lossless-recoverable stream compressor. Every supported statistical and state-space operator satisfies exact associativity over chronological `EventKey(event_time, source_id, seq)` order, stored inside a copy-on-write persistent B+ tree (`FoldTree<M, B>`).
+`backfold` is a persistent $O(\log T)$ associative-monoid streaming inference engine, native MCP server, and lossless-recoverable stream compressor. Every supported statistical and state-space operator satisfies exact associativity over chronological `EventKey(event_time, source_id, seq)` order, stored inside a copy-on-write persistent B+ tree (`FoldTree<M, 4>`).
 
 ---
 
@@ -10,23 +10,23 @@
 
 | Operator | Monoid Representation | Key Numerical Hardening | Exact Complexity |
 |---|---|---|---|
-| **Higher Moments** (`MomentsStream` / `MomentsMonoid`) | Chan–Pébay–Terriberry centered `(n, mean, mean_lo, m2, m3, m4, min, max, t_min, t_max)` | Knuth TwoSum double-double mean (`106-bit` effective precision): `<1e-10` variance accuracy even on `1e12 + N(0,1)` | $O(\log T)$ upsert/retract/range, $O(1)$ summary & fork |
+| **Higher Moments** (`MomentsStream` / `MomentsMonoid`) | Chan–Pébay–Terriberry centered `(n, mean, mean_lo, m2, m3, m4, min, max, t_min, t_max)` | Knuth TwoSum double-double mean (`106-bit` effective precision): `<1e-10` variance accuracy even on `1e12 + N(0,1)`; singleton fast-path `combine_assign` | $O(\log T)$ upsert/retract/range, $O(1)$ summary & fork |
 | **Continuous-Time EWMA** (`EwmaStream` / `EwmaMonoid`) | Centered exponential-decay weighted moments `(n, w_sum, mean, m2, t_first, t_last)` for arbitrary irregular $\Delta t$ | Subnormal-safe clamp (`lambda * dt > 700 => 0`), zero catastrophic cancellation | $O(\log T)$ upsert/retract/range, $O(1)$ summary & fork |
 | **Two-Sided Page CUSUM** (`CusumStream` / `CusumMonoid`) | Tropical semiring `(sum, max_pref, max_suff, max_sub)` with non-empty `max_pref` (identity = $-\infty$) | Exact onset/peak timestamps; monotone prefix descent locates exact `first_alarm(threshold)` | $O(\log T)$ upsert/retract/**first-alarm** |
-| **Anytime E-Process / e-CUSUM / Shiryaev-Roberts** (`EProcessStream` / `EProcessMonoid`) | 8-point symmetric betting grid (`[-0.5..0.5]`) maintaining: (1) Waudby-Smith-Ramdas martingale `wealth()`, (2) Shin-Ramdas-Rinaldo Page e-CUSUM `e_detector()`, (3) log-sum-exp Shiryaev-Roberts `sr_evalue()` + all-subinterval `scan_evalue()` | Composite-null margin `null_margin` (`|\mathbb{E}[\tanh(z/2)]| \le \delta`); provable $\mathbb{E}_0[\text{e\_value}] \le 1$ under heavy-tailed/Cauchy symmetric noise; Wang-Ramdas `ebh_reject` guarantees $\text{FDR} \le \alpha$ under arbitrary dependence | $O(\log T)$ upsert/retract/range |
-| **Linear Gaussian Kalman Filter & RTS Smoother** (`KalmanStream` / `KalmanFilter1D` / `KalmanFilter2D` / `KalmanMonoid`) | Särkkä & García-Fernández (IEEE TAC 2020) `(A, b, C, eta, J)` + **Anchor-Centered Gaussian Potential `(anchor, log_z)`** | Zero-alloc stack `1D`/`2D`, Joseph-form PSD leaves, x86-64 subnormal flush (`< 1e-290 => 0`), and coordinate-aligned input anchor eliminating $O(y^2/S)$ marginal log-likelihood cancellation (`1.14e-15` rel err @ 100k) | $O(\log T)$ late edit, retraction, **exact RTS smooth**, $O(1)$ root **$\log p(y_{1:T})$** |
-| **Multivariate Covariance & Mahalanobis** (`CovarianceStream` / `CovarianceMonoid`) | Pébay exact centered cross-product $(n, \mu, \mu_{\text{lo}}, M_{2,\text{upper}})$ with 106-bit Knuth TwoSum compensated mean | Zero-alloc inline stack storage for `dim <= 8`, in-place `combine_assign`, Jacobi-equilibrated Cholesky squared Mahalanobis (`mahalanobis_sq`, factored batch `mahalanobis_many`), `<1e-11` accuracy at `1e12` offset | $O(d^2 \log T)$ late edit/retract/range, $O(d^3)$ factored batch scoring |
+| **Anytime E-Process / e-CUSUM / Shiryaev-Roberts** (`EProcessStream`, `ebh_reject`, `sift_streams`) | 8-point symmetric betting grid (`[-0.5..0.5]`) maintaining: (1) Waudby-Smith-Ramdas martingale `wealth()`, (2) Shin-Ramdas-Rinaldo Page e-CUSUM `e_detector()`, (3) log-sum-exp Shiryaev-Roberts `sr_evalue()` + all-subinterval `scan_evalue()` | Composite-null margin `null_margin` (`|\mathbb{E}[\tanh(z/2)]| \le \delta`); provable $\mathbb{E}_0[\text{e\_value}] \le 1$ under heavy-tailed/Cauchy symmetric noise; Wang-Ramdas `ebh_reject` guarantees $\text{FDR} \le \alpha$ under arbitrary dependence | $O(\log T)$ upsert/retract/range; GIL-free batch `sift_streams` |
+| **Linear Gaussian Kalman Filter, RTS Smoother & Bayesian Changepoints** (`KalmanStream`) | Särkkä & García-Fernández (IEEE TAC 2020) `(A, b, C, eta, J)` + **Anchor-Centered Gaussian Potential `(anchor, log_z)`** + single-pass `split_summary` | Zero-alloc stack `1D`/`2D`, Joseph-form PSD leaves, x86-64 subnormal flush (`< 1e-290 => 0`), coordinate-aligned input anchor (`1.14e-15` rel err @ 100k), zero-cancellation `log_prior_coupling` differencing for Bayes factors, zero-combine cached-subtree shock locator (`locate_changepoint`) | $O(\log T)$ late edit, retraction, **exact RTS smooth**, **exact changepoint BF**; $O(1)$ root **$\log p(y_{1:T})$** |
+| **Multivariate Covariance, Streaming PCA & Mahalanobis** (`CovarianceStream`) | Pébay exact centered cross-product $(n, \mu, \mu_{\text{lo}}, M_{2,\text{upper}})$ with 106-bit Knuth TwoSum compensated mean | Zero-alloc inline stack storage for `dim <= 8`, in-place `combine_assign`, **pure-safe cyclic-Jacobi PCA (`pca`, `range_pca`, zero BLAS, `<1e-11` at `1e12` offset)**, Jacobi-equilibrated Cholesky squared Mahalanobis (`mahalanobis_sq`, factored batch `mahalanobis_many`) | $O(d^2 \log T)$ late edit/retract/range, $O(d^3)$ PCA & factored batch scoring |
 | **Continuous-Time Discounted Ridge** (`RidgeStream` / `RidgeMonoid`) | Packed upper-triangular Gram $G = X^T W X$, $g_y = X^T W y$, $y^T W y$ discounted to `t_last` | Stack-inline zero-alloc storage for `dim <= 8`, in-place `combine_assign`, Jacobi-equilibrated Cholesky ($D^{-1/2}(G + \alpha I)D^{-1/2}$) with partial-pivoted LU fallback, exact predictive variance | $O(d^2 \log T)$ delayed label edit, $O(d^3)$ solve |
-| **Multi-Agent CRDT & Bitemporal** (`SwarmEProcessLedger`, `BitemporalMoments`) | Persistent `Arc` copy-on-write forks + `Arc::ptr_eq` idempotent key-union merge | 0% overwrite churn, 0% echo double-counting, zero lookahead `as_of(knowledge_time)` | $O(1)$ fork (~16 ns), $O(\Delta \log T)$ merge |
+| **Multi-Agent CRDT & Bitemporal** (`SwarmEProcessLedger`, `BitemporalMoments`) | Persistent `Arc` copy-on-write forks + `Arc::ptr_eq` idempotent key-union merge | 0% overwrite churn, 0% echo double-counting, zero lookahead `as_of(knowledge_time)` | $O(1)$ fork (~20 ns), $O(\Delta \log T)$ merge |
 
 ---
 
 ## 2. Python API Reference (`import backfold as bf`)
 
-All bulk `ingest*` methods accept contiguous NumPy arrays (zero-copy via PEP-3118 `PyBuffer`) or plain Python lists/tuples. Non-finite (`NaN`, `Inf`, `-Inf`) inputs raise `ValueError`.
+All bulk `ingest*`, `smooth_many`, `scan_changepoints`, `locate_changepoint`, `mahalanobis_many`, `digest_stream`, and `sift_streams` calls accept contiguous NumPy arrays (zero-copy via PEP-3118 `PyBuffer`) or plain Python lists/tuples, and **release the Python GIL (`py.allow_threads`)** for true multi-core scaling. Non-finite (`NaN`, `Inf`, `-Inf`) inputs raise `ValueError`.
 
 ### `MomentsStream()`
-- `ingest(ts, xs, source_id=0)` — Bulk build ($O(T)$ when empty & sorted).
+- `ingest(ts, xs, source_id=0)` — Bulk build ($O(T)$ when empty & sorted, GIL-free).
 - `upsert(ts: int, x: float, source_id=0, seq=0)` — $O(\log T)$ insert or replace.
 - `retract(ts: int, source_id=0, seq=0) -> bool` — $O(\log T)$ exact removal.
 - `summary() -> dict` — Returns `{n, mean, variance, sample_variance, std, sample_std, skewness, excess_kurtosis, min, max, t_min, t_max, t_first, t_last}`.
@@ -56,8 +56,8 @@ All bulk `ingest*` methods accept contiguous NumPy arrays (zero-copy via PEP-311
 
 ### `KalmanStream(dim=2)`
 - Automatically dispatches to stack-only `KalmanFilter1D` (`dim=1`), stack-only `KalmanFilter2D` (`dim=2`), or dense `KalmanMonoid` (`dim>=3`).
-- `ingest_constant_velocity(ts, ys, dts, q_accel, r_obs, source_id=0)` (`dim=2`).
-- `ingest_random_walk(ts, ys, dts, q_rate, r_obs, source_id=0)` (`dim=1`).
+- `ingest_constant_velocity(ts, ys, dts, q_accel, r_obs, source_id=0)` (`dim=2`, GIL-free).
+- `ingest_random_walk(ts, ys, dts, q_rate, r_obs, source_id=0)` (`dim=1`, GIL-free).
 - `upsert_constant_velocity(ts, y, dt, q_accel, r_obs, source_id=0, seq=0)`.
 - `upsert_local_linear_trend(ts, y, dt, q_level, q_slope, r_obs, source_id=0, seq=0)`.
 - `upsert_scalar(ts, f, q, h, r, y, source_id=0, seq=0)` — Arbitrary linear Gaussian step with scalar obs.
@@ -66,23 +66,28 @@ All bulk `ingest*` methods accept contiguous NumPy arrays (zero-copy via PEP-311
 - `retract(ts, source_id=0, seq=0) -> bool`.
 - `posterior(m0, p0) -> (mean: list[float], cov_flat: list[float])` — Exact filtered posterior $p(x_T \mid y_{1:T})$.
 - `range_posterior(t_start, t_end, m0, p0) -> (mean, cov_flat)`.
-- `smooth_at(t, m0, p0) -> (mean, cov_flat)` — Exact $O(\log T)$ Rauch–Tung–Striebel smoothed posterior $p(x_t \mid y_{1:T})$ at any timestamp `t` (zero backward sweep!).
-- `smooth_many(ts, m0, p0) -> (means_2d, covs_2d)` — Batch $O(K \log T)$ exact RTS smoothing across `ts` in a single Rust loop.
+- `smooth_at(t, m0, p0) -> (mean, cov_flat)` — Exact single-pass $O(\log T)$ Rauch–Tung–Striebel smoothed posterior $p(x_t \mid y_{1:T})$ (zero backward sweep!).
+- `smooth_many(ts, m0, p0) -> (means_2d, covs_2d)` — Batch $O(K \log T)$ GIL-free exact RTS smoothing across `ts`.
 - `log_marginal_likelihood(m0, p0) -> float` — Exact Bayesian model evidence $\log p(y_{1:T})$ in $O(1)$ at the root (anchor-centered, zero $O(y^2/S)$ cancellation).
 - `range_log_marginal_likelihood(t_start, t_end, m0, p0) -> float` — Exact sub-window $\log p(y_{t_1:t_2})$ in $O(\log T)$.
+- `changepoint_bayes_factor(t, m0, p0, q_jump=None) -> float` — Exact zero-cancellation $O(\log T)$ log-Bayes-factor at split `t`: state reset $\log(p(y_{\le t})p(y_{>t})/p(y_{1:T}))$ when `q_jump=None`, or translation-invariant instantaneous shock $x_t^+ \sim \mathcal{N}(m_f, P_f + Q_{\text{jump}})$ when `q_jump` is passed.
+- `scan_changepoints(ts, m0, p0, q_jump=None) -> dict` — Batch $O(K \log T)$ GIL-free changepoint scan returning `{best_ts, best_log_bf, log_bfs}`.
+- `locate_changepoint(m0, p0, q_jump, n_windows=64) -> dict` — Zero-blind-spot hierarchical cached-subtree Bayesian shock locator returning `{best_ts, best_log_bf}` (pinpoints arbitrary shocks on `T = 50k–100k` in `<0.6 ms`!).
 - `fork()`, `merge(other)`, `len(stream)`.
 
 ### `CovarianceStream(dim)`
-- `ingest(ts, xmat_2d, source_id=0)` — Bulk build ($O(T)$ when empty & sorted).
+- `ingest(ts, xmat_2d, source_id=0)` — Bulk build ($O(T)$ when empty & sorted, GIL-free).
 - `upsert(ts, x, source_id=0, seq=0)`, `retract(ts, source_id=0, seq=0) -> bool`.
 - `mean() -> list[float]`, `covariance(ddof=1) -> list[list[float]]`, `correlation() -> list[list[float]]`.
+- `pca(ddof=1, top_k=None) -> dict` — Exact pure-safe cyclic-Jacobi streaming PCA returning `{dim, k, eigenvalues, explained_variance_ratio, components}` (zero BLAS/LAPACK, `<1e-11` accuracy even at `1e12` DC offset).
+- `range_pca(t_start, t_end, ddof=1, top_k=None) -> dict` — Exact $O(\log T + d^3)$ PCA over any historical time range `[t_start, t_end]`.
 - `mahalanobis_sq(x, ridge_eps=1e-6) -> float` — Exact Jacobi-equilibrated Cholesky squared Mahalanobis anomaly score.
-- `mahalanobis_many(xmat_2d, ridge_eps=1e-6) -> list[float]` — Factors Cholesky once per batch.
+- `mahalanobis_many(xmat_2d, ridge_eps=1e-6) -> list[float]` — Factors Cholesky once per batch (GIL-free).
 - `range_covariance(t_start, t_end, ddof=1)`, `range_correlation(t_start, t_end)`, `range_mahalanobis_sq(t_start, t_end, x, ridge_eps=1e-6)`.
 - `fork()`, `merge(other)`, `len(stream)`.
 
 ### `RidgeStream(dim, decay_rate=0.0, half_life=None)`
-- `ingest(ts, xmat_2d, yvec, source_id=0)`.
+- `ingest(ts, xmat_2d, yvec, source_id=0)` (GIL-free).
 - `upsert(ts, x, y, weight=1.0, source_id=0, seq=0)`, `retract(ts, source_id=0, seq=0) -> bool`.
 - `solve(alpha=1e-4) -> dict` — Returns `{weights, residual_variance, effective_weight, n, condition_est}`.
 - `predict_with_variance(x, alpha=1e-4) -> (y_hat, pred_var)`.
@@ -92,26 +97,35 @@ All bulk `ingest*` methods accept contiguous NumPy arrays (zero-copy via PEP-311
 - `SwarmEProcessLedger`: `spawn_agent(agent_id)`, `observe_z(agent_id, ts, source_id, seq, z, null_margin=0.0) -> bool` (`True` if novel, `False` if echo), `retract(agent_id, ts, source_id, seq)`, `agent_summary(agent_id)`, `merge_all() -> dict`, `stats() -> dict`.
 - `BitemporalMoments`: `ingest_event(event_time, knowledge_time, x, source_id=0, seq=0)`, `retract_event(event_time, knowledge_time, source_id=0, seq=0)`, `as_of(knowledge_time) -> dict`, `live_summary() -> dict`.
 - `ebh_reject(e_values, alpha=0.05) -> list[int]` — Wang & Ramdas (2022) arbitrary-dependence e-BH FDR control.
-- `digest_stream(channel, ts, xs, top_k=5, threshold=10.0) -> dict` — Returns structured digest + pure-Markdown `digest["markdown"]` (<300 tokens).
+- `sift_streams(channels_2d, warmup=120, alpha=0.05, null_margin=0.15) -> dict` — Single-call GIL-free pure-Rust multi-stream FDR sifter across `n_streams x t_len` channels returning `{rejected, e_values, baselines}`.
+- `digest_stream(channel, ts, xs, top_k=5, threshold=10.0) -> dict` — Returns structured digest + pure-Markdown `digest["markdown"]` (<300 tokens, GIL-free).
 - `causal_robust_scale(prefix) -> (median, mad_sigma)`.
 
 ---
 
-## 3. Native CLI Reference (`backfold`)
+## 3. Native CLI & Built-In MCP Server (`backfold`)
 
 ```sh
-backfold demo                                          # 6 live verified 100k-tick demos in <0.6s
+backfold demo                                          # 7 live verified 100k-tick demos in 0.53s
 backfold digest data.csv --value-col 1 --top-k 5       # <300-token lossless-recoverable Markdown digest
 backfold digest data.csv --json                        # Machine-readable JSON digest
 backfold drill data.csv --start 22498 --end 22507      # Recover exact raw ticks for any hotspot window
 backfold bench [--json]                                # Live Rust O(log T) vs. -O3 seq Rust benchmark
+backfold mcp                                           # Zero-dependency stdio MCP 2024-11-05 JSON-RPC server
 ```
+
+### MCP Tools Exposed by `backfold mcp`
+1. `backfold_digest_csv(path, time_col=0, value_col=1, top_k=5, threshold=10.0)`
+2. `backfold_drill_csv(path, start, end, time_col=0, value_col=1, max_rows=120)`
+3. `backfold_kalman_rts_csv(path, time_col=0, value_col=1, query_ts=None, q_accel=1e-3, r_obs=0.25, scan_changepoints=True, n_scan_points=48)`
+4. `backfold_covariance_pca_csv(path, value_cols, time_col=0, start=None, end=None, top_k=None)`
+5. `backfold_ebh_sift_csv(path, value_cols=None, time_col=0, warmup=100, alpha=0.05, null_margin=0.15)`
 
 ---
 
 ## 4. Copy-Paste Recipes
 
-### Late-arrival Kalman filter + exact O(log T) RTS smoother + marginal log-likelihood
+### Late-arrival Kalman filter + exact O(log T) RTS smoother + Bayesian changepoint localization
 ```python
 import numpy as np
 import backfold as bf
@@ -124,26 +138,24 @@ m0, p0 = [0.0, 0.0], [10.0, 0.0, 0.0, 10.0]
 kf = bf.KalmanStream(dim=2)
 kf.ingest_constant_velocity(ts, ys, dts, q_accel=1e-3, r_obs=0.25)
 
-# Counterfactual branch in O(1) (~16 ns), repair tick 33,333 + exact RTS smooth + log p(y) in ~12.4 us
+# Counterfactual branch in O(1) (~20 ns), repair tick 33,333 + exact RTS smooth + log p(y) in ~11.1 us
 alt = kf.fork()
 alt.upsert_constant_velocity(33_333, float(ys[33_333] + 10.0), 1.0, 1e-3, 0.25)
 
 sm_mean, sm_cov = alt.smooth_at(50_000, m0, p0)       # Exact RTS posterior p(x_50000 | y_1:100000)
 log_ev = alt.log_marginal_likelihood(m0, p0)          # Exact log p(y_1:100000) in O(1) at root!
+hit = alt.locate_changepoint(m0, p0, [200.0, 0.0, 0.0, 1.0])  # Pinpoints shock in <0.6 ms!
 ```
 
-### Multi-stream FDR-controlled monitoring across 500 channels
+### Single-call 500-channel FDR-controlled anomaly sifter
 ```python
 import numpy as np
 import backfold as bf
 
-e_vals = []
-for ch_ts, ch_x in streams:
-    med, mad = bf.causal_robust_scale(ch_x[:120])
-    z = (ch_x[120:] - med) / mad
-    ep = bf.EProcessStream()
-    ep.ingest_z(ch_ts[120:], z, null_margin=0.15)
-    e_vals.append(ep.e_value())
+channels = np.random.default_rng(0).normal(0.0, 1.0, size=(500, 400))
+channels[10:60] *= 3.0       # 50 loud 3x-noise distractors
+channels[:10, 220:] += 1.8   # 10 genuine regime shifts
 
-alarmed_channels = bf.ebh_reject(e_vals, alpha=0.05)  # Provable FDR <= 0.05 under arbitrary dependence
+res = bf.sift_streams(channels, warmup=120, alpha=0.05, null_margin=0.15)
+print(res["rejected"])       # [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] -> FDR = 0.000, Recall = 1.000!
 ```

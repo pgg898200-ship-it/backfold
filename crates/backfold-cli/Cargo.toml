@@ -7,13 +7,13 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 readme = "../../README.md"
-description = "Sub-5ms CLI for backfold: O(log T) out-of-order streaming inference, counterfactual forks, and <300-token agent stream digests"
+description = "Sub-5ms CLI & MCP server for backfold: O(log T) out-of-order streaming inference, RTS smoothing, counterfactual forks, and <300-token agent stream digests"
 
 [[bin]]
 name = "backfold"
 path = "src/main.rs"
 
 [dependencies]
-backfold-core = { version = "0.2.0", path = "../backfold-core" }
+backfold-core = { version = "0.3.0", path = "../backfold-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

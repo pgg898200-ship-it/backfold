@@ -22,9 +22,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy (strict zero warnings)
-        run: cargo clippy --package backfold-core --package backfold-cli --all-targets -- -D warnings
-      - name: Core unit + Adversarial Breaker tests (release)
-        run: cargo test --package backfold-core --package backfold-cli --release
+        run: cargo clippy --package backfold-core --package backfold-cli --package backfold-wasm --all-targets -- -D warnings
+      - name: Core unit + Adversarial Breaker + MCP + WASM tests (release)
+        run: cargo test --package backfold-core --package backfold-cli --package backfold-wasm --release
       - name: CLI smoke test
         run: cargo run --release --bin backfold -- demo
 
@@ -56,5 +56,6 @@ jobs:
           python examples/kalman_rts_smoothing.py
           python examples/multivariate_anomaly_cov.py
           python examples/polars_late_arrivals.py
+          python examples/streaming_pca_and_changepoint_bf.py
       - name: Lint with ruff
         run: ruff check python/ benchmarks/ tests/ examples/

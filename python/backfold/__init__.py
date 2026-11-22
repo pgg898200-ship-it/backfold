@@ -14,6 +14,7 @@ from backfold._backfold import (
     causal_robust_scale,
     digest_stream,
     ebh_reject,
+    sift_streams,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "causal_robust_scale",
     "digest_stream",
     "ebh_reject",
+    "sift_streams",
 ]

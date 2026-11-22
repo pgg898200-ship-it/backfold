@@ -338,6 +338,134 @@ impl CovarianceMonoid {
         }
         Ok(out)
     }
+
+    /// Exact Principal Component Analysis (PCA) of the streaming covariance matrix via pure-safe
+    /// cyclic Jacobi symmetric eigendecomposition (exact to `< 1e-13`, zero external BLAS/LAPACK).
+    ///
+    /// Returns eigenvalues (descending), explained variance ratios, and row-major principal
+    /// component eigenvectors (`k x dim`, deterministic sign with largest-magnitude entry >= 0).
+    pub fn pca(&self, ddof: u64, top_k: Option<usize>) -> CovariancePca {
+        let d = self.dim;
+        let k = top_k.unwrap_or(d).min(d);
+        if self.n <= ddof || d == 0 || k == 0 {
+            return CovariancePca {
+                dim: d,
+                k,
+                eigenvalues: vec![0.0; k],
+                explained_variance_ratio: vec![0.0; k],
+                components: vec![0.0; k * d],
+            };
+        }
+        let mut a = self.covariance(ddof);
+        let mut v = vec![0.0; d * d];
+        for i in 0..d {
+            v[i * d + i] = 1.0;
+        }
+        let diag_scale = (0..d)
+            .map(|i| a[i * d + i].abs())
+            .fold(0.0f64, f64::max)
+            .max(1e-300);
+
+        // Cyclic Jacobi sweeps with Wilkinson tangent formula
+        for _sweep in 0..64 {
+            let mut max_off = 0.0f64;
+            for p in 0..d {
+                for q in (p + 1)..d {
+                    let apq = a[p * d + q];
+                    let abs_apq = apq.abs();
+                    if abs_apq > max_off {
+                        max_off = abs_apq;
+                    }
+                    if abs_apq <= 1e-15 * diag_scale {
+                        continue;
+                    }
+                    let app = a[p * d + p];
+                    let aqq = a[q * d + q];
+                    let tau = (aqq - app) / (2.0 * apq);
+                    let t = if tau >= 0.0 {
+                        1.0 / (tau + (1.0 + tau * tau).sqrt())
+                    } else {
+                        -1.0 / (-tau + (1.0 + tau * tau).sqrt())
+                    };
+                    let c = 1.0 / (1.0 + t * t).sqrt();
+                    let s = t * c;
+
+                    a[p * d + p] = app - t * apq;
+                    a[q * d + q] = aqq + t * apq;
+                    a[p * d + q] = 0.0;
+                    a[q * d + p] = 0.0;
+
+                    for r in 0..d {
+                        if r != p && r != q {
+                            let arp = a[r * d + p];
+                            let arq = a[r * d + q];
+                            let nrp = c * arp - s * arq;
+                            let nrq = s * arp + c * arq;
+                            a[r * d + p] = nrp;
+                            a[p * d + r] = nrp;
+                            a[r * d + q] = nrq;
+                            a[q * d + r] = nrq;
+                        }
+                        let vrp = v[r * d + p];
+                        let vrq = v[r * d + q];
+                        v[r * d + p] = c * vrp - s * vrq;
+                        v[r * d + q] = s * vrp + c * vrq;
+                    }
+                }
+            }
+            if max_off <= 1e-14 * diag_scale {
+                break;
+            }
+        }
+
+        let mut order: Vec<usize> = (0..d).collect();
+        order.sort_by(|&i, &j| a[j * d + j].total_cmp(&a[i * d + i]));
+
+        let total_var: f64 = order.iter().map(|&i| a[i * d + i].max(0.0)).sum();
+        let mut eigenvalues = Vec::with_capacity(k);
+        let mut explained_variance_ratio = Vec::with_capacity(k);
+        let mut components = Vec::with_capacity(k * d);
+
+        for &col in order.iter().take(k) {
+            let ev = a[col * d + col].max(0.0);
+            eigenvalues.push(ev);
+            explained_variance_ratio.push(if total_var > 0.0 { ev / total_var } else { 0.0 });
+            // Canonicalize eigenvector sign (largest-magnitude entry positive)
+            let mut max_idx = 0usize;
+            let mut max_val = 0.0f64;
+            for r in 0..d {
+                let val = v[r * d + col].abs();
+                if val > max_val {
+                    max_val = val;
+                    max_idx = r;
+                }
+            }
+            let sign = if v[max_idx * d + col] < 0.0 { -1.0 } else { 1.0 };
+            for r in 0..d {
+                components.push(v[r * d + col] * sign);
+            }
+        }
+
+        CovariancePca {
+            dim: d,
+            k,
+            eigenvalues,
+            explained_variance_ratio,
+            components,
+        }
+    }
+}
+
+/// Exact principal component decomposition of a streaming or time-range covariance matrix.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct CovariancePca {
+    pub dim: usize,
+    pub k: usize,
+    pub eigenvalues: Vec<f64>,
+    pub explained_variance_ratio: Vec<f64>,
+    /// Row-major `k x dim` orthonormal principal component loading vectors.
+    pub components: Vec<f64>,
 }
 
 impl Monoid for CovarianceMonoid {
@@ -562,5 +690,80 @@ mod tests {
         );
         let d2_zero = sc.mahalanobis_sq(&ref_mean, 1e-6).unwrap();
         assert!(d2_zero < 1e-14, "exact center d2={d2_zero}");
+    }
+
+    #[test]
+    fn streaming_pca_orthonormal_reconstruction_and_1e12_parity() {
+        let base = 1e12_f64;
+        let mut tree_hi: FoldTree<CovarianceMonoid, 4> = FoldTree::new(4);
+        let mut tree_lo: FoldTree<CovarianceMonoid, 4> = FoldTree::new(4);
+        let mut seed = 123456789u64;
+        for i in 0..400 {
+            let mut next_u = || {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                ((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
+            };
+            let z0 = next_u() * 10.0;
+            let z1 = next_u() * 3.0;
+            let z2 = next_u() * 0.5;
+            let z3 = next_u() * 0.1;
+            let raw = [
+                z0 + 0.2 * z1,
+                0.8 * z0 - 0.6 * z1 + z2,
+                -0.4 * z0 + z1 + 0.3 * z3,
+                0.1 * z0 - 0.3 * z1 + z3,
+            ];
+            let shifted = [base + raw[0], base + raw[1], base + raw[2], base + raw[3]];
+            let exact = [
+                shifted[0] - base,
+                shifted[1] - base,
+                shifted[2] - base,
+                shifted[3] - base,
+            ];
+            tree_hi.upsert(
+                EventKey::at(i),
+                CovarianceMonoid::singleton(i, &shifted).unwrap(),
+            );
+            tree_lo.upsert(
+                EventKey::at(i),
+                CovarianceMonoid::singleton(i, &exact).unwrap(),
+            );
+        }
+        let s_hi = tree_hi.summary();
+        let s_lo = tree_lo.summary();
+        let pca_hi = s_hi.pca(1, None);
+        let pca_lo = s_lo.pca(1, None);
+        let cov_lo = s_lo.covariance(1);
+        assert_eq!(pca_hi.eigenvalues.len(), 4);
+        // Eigenvalues strictly descending and explained variance sums to 1
+        let sum_evr: f64 = pca_hi.explained_variance_ratio.iter().sum();
+        assert!((sum_evr - 1.0).abs() < 1e-13);
+        for i in 0..3 {
+            assert!(pca_hi.eigenvalues[i] >= pca_hi.eigenvalues[i + 1]);
+        }
+        // Orthonormality V * V^T == I and exact reconstruction V^T * diag(lambda) * V == Cov
+        for i in 0..4 {
+            for j in 0..4 {
+                let mut dot = 0.0;
+                let mut rec = 0.0;
+                for r in 0..4 {
+                    dot += pca_hi.components[i * 4 + r] * pca_hi.components[j * 4 + r];
+                    rec += pca_hi.eigenvalues[r]
+                        * pca_hi.components[r * 4 + i]
+                        * pca_hi.components[r * 4 + j];
+                }
+                let expected_i = if i == j { 1.0 } else { 0.0 };
+                assert!((dot - expected_i).abs() < 1e-13, "V*V^T[{i},{j}]={dot}");
+                assert!(
+                    (rec - cov_lo[i * 4 + j]).abs() < 1e-11,
+                    "reconstruct[{i},{j}]: {rec} vs {}",
+                    cov_lo[i * 4 + j]
+                );
+            }
+            assert!(
+                (pca_hi.eigenvalues[i] - pca_lo.eigenvalues[i]).abs() < 1e-11,
+                "1e12 offset eigenvalue[{i}] mismatch"
+            );
+        }
     }
 }

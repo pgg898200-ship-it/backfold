@@ -122,36 +122,27 @@ def run_multi_agent_eval(bf: Any, seed: int = 20261122) -> list[dict[str, Any]]:
     t_len = 400
     alpha = 0.05
 
-    ts_arr = np.arange(t_len, dtype=np.int64)
     true_set = set(range(n_true))
     loud_set = set(range(n_true, n_true + n_loud_traps))
 
+    channels = np.empty((n_streams, t_len), dtype=np.float64)
     naive_union_alarms: set[int] = set()
-    e_values: list[float] = []
-
-    t_bf0 = time.perf_counter()
     for ch in range(n_streams):
         sigma = 3.0 if ch in loud_set else 1.0
         x = rng.normal(0.0, sigma, size=t_len)
         if ch in true_set:
             # Regime shift of +1.6 sigma starting at t=220
             x[220:] += 1.6 * sigma
+        channels[ch] = x
 
         # Naive baseline: flags any channel with raw mean(last 50) > 0.65 or max(|raw|) > 4.5
         if abs(float(np.mean(x[-50:]))) > 0.65 or float(np.max(np.abs(x))) > 4.5:
             naive_union_alarms.add(ch)
 
-        # Backfold: causal warm-up robust MAD standardization (first 120 ticks) + anytime e-CUSUM
-        warm = x[:120]
-        med = float(np.median(warm))
-        mad = float(np.median(np.abs(warm - med))) * 1.4826
-        scale = max(mad, 1e-6)
-        z = (x[120:] - med) / scale
-        ep = bf.EProcessStream()
-        ep.ingest_z(ts_arr[120:], z, null_margin=0.15)
-        e_values.append(ep.e_value())
-
-    bf_rejected = set(bf.ebh_reject(e_values, alpha))
+    # Backfold: single-call GIL-free pure-Rust causal MAD + anytime-valid e-process + Wang-Ramdas e-BH
+    t_bf0 = time.perf_counter()
+    sift_out = bf.sift_streams(channels, warmup=120, alpha=alpha, null_margin=0.15)
+    bf_rejected = set(sift_out["rejected"])
     bf_sift_ms = (time.perf_counter() - t_bf0) * 1e3
 
     def fdr_and_recall(pred: set[int]) -> dict[str, Any]:

@@ -130,67 +130,92 @@ impl Monoid for MomentsMonoid {
     }
 
     #[inline]
-    fn combine(a: &Self, b: &Self, _ctx: &Self::Ctx) -> Self {
+    fn combine(a: &Self, b: &Self, ctx: &Self::Ctx) -> Self {
         if a.n == 0 {
             return b.clone();
         }
         if b.n == 0 {
             return a.clone();
         }
-        let na = a.n as f64;
-        let nb = b.n as f64;
-        let n_u64 = a.n + b.n;
+        let mut out = a.clone();
+        out.combine_assign(b, ctx);
+        out
+    }
+
+    #[inline]
+    fn combine_assign(&mut self, b: &Self, _ctx: &Self::Ctx) {
+        if b.n == 0 {
+            return;
+        }
+        if self.n == 0 {
+            *self = b.clone();
+            return;
+        }
+        let na = self.n as f64;
+        let n_u64 = self.n + b.n;
         let n = n_u64 as f64;
 
-        // Error-free double-double difference: delta = (b.mean + b.mean_lo) - (a.mean + a.mean_lo)
-        let (d_hi, d_err) = two_sum(b.mean, -a.mean);
-        let (delta, delta_lo) = two_sum(d_hi, d_err + (b.mean_lo - a.mean_lo));
-        let delta_n = delta / n;
-        let delta_n2 = delta_n * delta_n;
-        let term1 = delta * delta_n * na * nb;
+        if b.n == 1 {
+            // Fast singleton path (~94% of bulk from_sorted & leaf recompute combines):
+            // b.m2 == b.m3 == b.m4 == b.mean_lo == 0.0
+            let (d_hi, d_err) = two_sum(b.mean, -self.mean);
+            let (delta, delta_lo) = two_sum(d_hi, d_err - self.mean_lo);
+            let delta_n = delta / n;
+            let delta_n2 = delta_n * delta_n;
+            let term1 = delta * delta_n * na;
 
-        // Compensated mean update preserving sub-ULP fractional bits
-        let step_hi = nb * delta_n;
-        let step_rem = (nb.mul_add(delta, -(step_hi * n)) + nb * delta_lo) / n;
-        let (m_hi, m_err) = two_sum(a.mean, step_hi);
-        let (mean, mean_lo) = two_sum(m_hi, (a.mean_lo + step_rem) + m_err);
+            let step_rem = (delta - delta_n * n + delta_lo) / n;
+            let (m_hi, m_err) = two_sum(self.mean, delta_n);
+            let (mean, mean_lo) = two_sum(m_hi, (self.mean_lo + step_rem) + m_err);
 
-        let m2 = a.m2 + b.m2 + term1;
-        let m3 = a.m3
-            + b.m3
-            + term1 * delta_n * (na - nb)
-            + 3.0 * delta_n * (na * b.m2 - nb * a.m2);
-        let m4 = a.m4
-            + b.m4
-            + term1 * delta_n2 * (na * na - na * nb + nb * nb)
-            + 6.0 * delta_n2 * (na * na * b.m2 + nb * nb * a.m2)
-            + 4.0 * delta_n * (na * b.m3 - nb * a.m3);
-
-        let (min, t_min) = if a.min < b.min || (a.min == b.min && a.t_min <= b.t_min) {
-            (a.min, a.t_min)
+            let m2_old = self.m2;
+            let m3_old = self.m3;
+            self.m4 += term1 * delta_n2 * (na * na - na + 1.0)
+                + 6.0 * delta_n2 * m2_old
+                - 4.0 * delta_n * m3_old;
+            self.m3 = m3_old + term1 * delta_n * (na - 1.0) - 3.0 * delta_n * m2_old;
+            self.m2 = m2_old + term1;
+            self.mean = mean;
+            self.mean_lo = mean_lo;
         } else {
-            (b.min, b.t_min)
-        };
-        let (max, t_max) = if a.max > b.max || (a.max == b.max && a.t_max <= b.t_max) {
-            (a.max, a.t_max)
-        } else {
-            (b.max, b.t_max)
-        };
+            let nb = b.n as f64;
+            let (d_hi, d_err) = two_sum(b.mean, -self.mean);
+            let (delta, delta_lo) = two_sum(d_hi, d_err + (b.mean_lo - self.mean_lo));
+            let delta_n = delta / n;
+            let delta_n2 = delta_n * delta_n;
+            let term1 = delta * delta_n * na * nb;
 
-        Self {
-            n: n_u64,
-            mean,
-            mean_lo,
-            m2,
-            m3,
-            m4,
-            min,
-            max,
-            t_min,
-            t_max,
-            t_first: a.t_first.min(b.t_first),
-            t_last: a.t_last.max(b.t_last),
+            let step_hi = nb * delta_n;
+            let step_rem = (nb.mul_add(delta, -(step_hi * n)) + nb * delta_lo) / n;
+            let (m_hi, m_err) = two_sum(self.mean, step_hi);
+            let (mean, mean_lo) = two_sum(m_hi, (self.mean_lo + step_rem) + m_err);
+
+            let m2_old = self.m2;
+            let m3_old = self.m3;
+            self.m4 += b.m4
+                + term1 * delta_n2 * (na * na - na * nb + nb * nb)
+                + 6.0 * delta_n2 * (na * na * b.m2 + nb * nb * m2_old)
+                + 4.0 * delta_n * (na * b.m3 - nb * m3_old);
+            self.m3 = m3_old
+                + b.m3
+                + term1 * delta_n * (na - nb)
+                + 3.0 * delta_n * (na * b.m2 - nb * m2_old);
+            self.m2 = m2_old + b.m2 + term1;
+            self.mean = mean;
+            self.mean_lo = mean_lo;
         }
+
+        if b.min < self.min || (b.min == self.min && b.t_min < self.t_min) {
+            self.min = b.min;
+            self.t_min = b.t_min;
+        }
+        if b.max > self.max || (b.max == self.max && b.t_max < self.t_max) {
+            self.max = b.max;
+            self.t_max = b.t_max;
+        }
+        self.n = n_u64;
+        self.t_first = self.t_first.min(b.t_first);
+        self.t_last = self.t_last.max(b.t_last);
     }
 }
 

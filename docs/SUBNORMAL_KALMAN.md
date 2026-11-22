@@ -79,8 +79,10 @@ For any scalar observation leaf with $g = F^\top h$, choose a coordinate-aligned
 | Method | RTS Mean Error | RTS Cov Error | `log p(y)` Rel Error | Latency (`T=100k` Py / `T=500k` Rust) |
 |---|---:|---:|---:|---|
 | Uncentered canonical `log_z` | `9.09e-13` | `1.35e-16` | `2.86e-9` *(fails `1e-9` gate!)* | — |
-| **Anchor-Centered Gaussian Potential (`v0.2.0`)** | **`9.09e-13`** | **`1.35e-16`** | **`1.14e-15`** *(**2.5M× better!**)* | **`12.45 µs` Py (`533,197×` NumPy RTS) · `6.52 µs` Rust (`3,109×` seq RTS)** |
+| **Anchor-Centered Gaussian Potential (`v0.3.0`, single-pass `split_summary`)** | **`9.09e-13`** | **`1.35e-16`** | **`1.14e-15`** *(**2.5M× better!**)* | **`11.12 µs` Py (`578,868×` NumPy RTS) · `5.37 µs` Rust (`3,694×` seq RTS)** |
 | **`1e6` offset trajectory (`T = 10k`, `y ~ 1,000,000`)** | **`2.61e-11`** | **`1.42e-16`** | **`1.04e-12`** | Exact even at $10^6$ offset |
+
+In `v0.3.0`, we also added **zero-cancellation Bayesian changepoint Bayes factors** (`changepoint_bayes_factor`, `locate_changepoint`). Because $\log p(y_{1:T}) = \log p(y_{\le t}) + \log p(y_{>t} \mid m_f, P_f)$ and every suffix evaluation shares the exact same `right.log_z`, subtracting the two prior-coupling increments $\Delta(m_{\text{alt}}, P_{\text{alt}}; \text{right}) - \Delta(m_f, P_f; \text{right})$ cancels `right.log_z` **identically to zero** (even at $T = 10^9$!). Paired with zero-combine cached-subtree excess-NLL screening (`FoldTree::scan_cached_subtrees`), `locate_changepoint` localizes arbitrary off-grid regime shocks across 50k–100k ticks (even at `+1e6` offset) to the exact tick in **`0.39–0.55 ms`**.
 
 ---
 
@@ -90,7 +92,7 @@ Everyone knows naive $\frac{1}{n}\sum x_i^2 - \bar{x}^2$ suffers catastrophic ca
 
 Because `1e12 ≈ 2^40`, an IEEE-754 `f64` only has 13 bits below the binary point (`ulp(1e12) ≈ 1.22e-4`). Storing `mean` as a single `f64` throws away the sub-ULP fractional part of every subtree mean before computing `delta = b.mean - a.mean`.
 
-Adding a **Knuth TwoSum** error-compensation field (`mean_lo`) gives **106-bit effective mean precision** inside both [`MomentsMonoid`](../crates/backfold-core/src/ops/moments.rs) and [`CovarianceMonoid`](../crates/backfold-core/src/ops/covariance.rs). Our adversarial Breaker suite verifies `< 1e-11` variance, covariance, correlation, and Mahalanobis distance error on `1e12 + N(0, Σ)` streams — even after inserting a `1e150` spike and retracting it.
+Adding a **Knuth TwoSum** error-compensation field (`mean_lo`) gives **106-bit effective mean precision** inside both [`MomentsMonoid`](../crates/backfold-core/src/ops/moments.rs) and [`CovarianceMonoid`](../crates/backfold-core/src/ops/covariance.rs). Our adversarial Breaker suite verifies `< 1e-11` variance, covariance, correlation, cyclic-Jacobi **streaming PCA (`pca`, `range_pca`)**, and Mahalanobis distance error on `1e12 + N(0, Σ)` streams — even after inserting a `1e150` spike and retracting it.
 
 ---
 
@@ -104,15 +106,15 @@ The clean algebraic fix: the **Shiryaev–Roberts** statistic $R_T = \sum_{s=1}^
 
 $$\mathbb{E}_0\!\left[\frac{R_T}{T}\right] = \frac{1}{T} \sum_{s=1}^T \mathbb{E}_0\!\left[\prod_{i=s}^T E_i\right] \le 1 \quad \text{and} \quad \mathbb{E}_0\!\left[\frac{\sum_{s \le e} \prod_{i=s}^e E_i}{T(T+1)/2}\right] \le 1$$
 
-Combined with a composite-null margin (`singleton_z_composite(ts, z, null_margin)`) to absorb warm-up median estimation error, our 500-channel firehose dropped immediately from `FDR = 0.714` to **`TP = 10/10, FP = 0, loud-trap FP = 0, FDR = 0.000`** — and passed 200-trial Monte Carlo FDR tests under Gaussian, Student-$t_3$, and **infinite-variance Cauchy noise**.
+Combined with a composite-null margin (`singleton_z_composite(ts, z, null_margin)`) to absorb warm-up median estimation error (and compiled into a single-call GIL-free pure-Rust sifter `sift_streams`), our 500-channel firehose dropped from `FDR = 0.714` to **`TP = 10/10, FP = 0, loud-trap FP = 0, FDR = 0.000`** in **`107.4 ms`** — and passed 200-trial Monte Carlo FDR tests under Gaussian, Student-$t_3$, and **infinite-variance Cauchy noise**.
 
 ---
 
-## 5. Honest Crossover: When You Should NOT Use `backfold`
+## 5. Honest Crossover & Live Browser Verification
 
-If your stream is strictly append-only, strictly in-order, never retracts or edits past events, never runs arbitrary `[t1, t2]` range queries, and never branches counterfactual timelines, a plain sequential pass is faster on initial construction. On `MomentsMonoid`, bulk tree construction (`10.2 ms` @ `100k`, `47.9 ms` @ `500k`) breaks even against a single-pass `-O3` Rust loop (`0.30 ms` / `1.56 ms`) after **31–34 late edits or range queries**.
+If your stream is strictly append-only, strictly in-order, never retracts or edits past events, never runs arbitrary `[t1, t2]` range queries, and never branches counterfactual timelines, a plain sequential pass is faster on initial construction. On `MomentsMonoid` (tuned to Pareto-optimal `B = 4` + singleton-leaf `combine_assign`), bulk tree construction (`9.99 ms` @ `100k`, `51.07 ms` @ `500k`) breaks even against a single-pass `-O3` Rust loop (`0.30 ms` / `1.65 ms`) after **31–33 late edits or range queries** — while late edits themselves hit **`0.806 µs` (`8,152×`)** on CT-EWMA, **`0.979 µs` (`6,185×`)** on 1D Kalman, and **`1.278 µs` (`1,288×`)** on Moments at `T = 500,000`!
 
-Reproduce every number in this post locally in <10 seconds:
+Try it live in WebAssembly (`~7.8 µs` vs `28.1 ms` JS seq RTS = `3,606×` right in your browser) at [https://pgg898200-ship-it.github.io/backfold/](https://pgg898200-ship-it.github.io/backfold/), or reproduce locally in <10 seconds:
 ```sh
 cargo run --release --bin backfold -- demo
 cargo run --release --bin backfold -- bench
