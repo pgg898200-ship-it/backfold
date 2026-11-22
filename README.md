@@ -50,7 +50,9 @@ cargo build --release --bin backfold
 ./target/release/backfold drill benchmarks/sample_100k.csv --start 22498 --end 22507
 ```
 
-For an MCP client, set the command to the absolute path of that executable and the arguments to `["mcp"]`. The server uses standard input and output. Start with `backfold_digest_csv` for a summary and `backfold_drill_csv` for the underlying rows. The reference includes the tools for Kalman smoothing, covariance and channel screening. [Agent guide](llms.txt) · [API reference](llms-full.txt) · [Coding-agent skill](skills/backfold/SKILL.md)
+For a desktop client that opens MCP bundles, install the [Backfold 0.3.0 bundle](https://github.com/pgg898200-ship-it/backfold/releases/download/v0.3.0/backfold-0.3.0.mcpb). The package supports Apple Silicon macOS, Windows x86-64 and Linux x86-64. [Official MCP Registry entry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.pgg898200-ship-it%2Fbackfold/versions/0.3.0) · [Try it on a four-row CSV](integrations/mcpb/README.md)
+
+For manual MCP configuration, set the command to the absolute path of that executable and the arguments to `["mcp"]`. The server uses standard input and output. Start with `backfold_digest_csv` for a summary and `backfold_drill_csv` for the underlying rows. The reference includes the tools for Kalman smoothing, covariance and channel screening. [Agent guide](llms.txt) · [API reference](llms-full.txt) · [Coding-agent skill](skills/backfold/SKILL.md)
 
 ## What does a late edit cost?
 
