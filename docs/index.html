@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>backfold — Persistent O(log T) Out-of-Order Streaming Inference</title>
+  <meta name="description" content="Persistent O(log T) associative-monoid engine for out-of-order, retractable, forkable online statistical inference (Kalman, CUSUM, EWMA, Ridge, anytime e-values + e-BH FDR) and <300-token lossless-recoverable agent stream compression. Pure safe Rust + zero-copy Python, Apache-2.0." />
+  <style>
+    :root {
+      --bg: #ffffff; --card: #f8fafc; --fg: #0f172a; --muted: #475569;
+      --border: #e2e8f0; --accent: #0f766e; --good: #15803d; --code-bg: #f1f5f9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0f19; --card: #111827; --fg: #f1f5f9; --muted: #94a3b8;
+        --border: #1e293b; --accent: #2dd4bf; --good: #4ade80; --code-bg: #0f172a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 2.2rem; margin: 0 0 .5rem; letter-spacing: -.02em; }
+    h2 { font-size: 1.25rem; margin: 2.25rem 0 .75rem; border-bottom: 1px solid var(--border); padding-bottom: .35rem; }
+    p.lead { color: var(--muted); font-size: 1.05rem; margin: 0 0 1.25rem; }
+    .badges { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.25rem; }
+    .badge { font-family: ui-monospace, monospace; font-size: .78rem; padding: .2rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--muted); }
+    .links { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 2rem; font-size: .92rem; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .85rem; margin: 1.25rem 0; }
+    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    .kpi .k { font-size: .78rem; color: var(--muted); }
+    .kpi .v { font-family: ui-monospace, monospace; font-size: 1.5rem; font-weight: 700; margin: .2rem 0; }
+    .kpi .s { font-family: ui-monospace, monospace; font-size: .76rem; color: var(--good); }
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: .86rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    table { width: 100%; border-collapse: collapse; font-size: .86rem; font-family: ui-monospace, monospace; margin: 1rem 0; }
+    th, td { padding: .5rem .6rem; border-bottom: 1px solid var(--border); text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .good { color: var(--good); font-weight: 600; }
+    footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--border); font-size: .85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="badges">
+      <span class="badge">v0.1.0</span>
+      <span class="badge">Apache-2.0</span>
+      <span class="badge">#![forbid(unsafe_code)]</span>
+      <span class="badge">3.25 ms CLI</span>
+      <span class="badge">Zero-Copy Python</span>
+    </div>
+    <h1>backfold</h1>
+    <p class="lead">
+      Persistent <code>O(log T)</code> associative-monoid engine for out-of-order, retractable, forkable online statistical inference and lossless-recoverable AI agent stream compression.
+    </p>
+    <div class="links">
+      <a href="https://github.com/pgg898200-ship-it/backfold">GitHub Repository</a>
+      <a href="./SUBNORMAL_KALMAN.md">Post-Mortem: 4,297&times; Kalman &amp; Subnormal Traps (MD)</a>
+      <a href="./llms.txt">llms.txt (Agent Index)</a>
+      <a href="./llms-full.txt">llms-full.txt (Full API)</a>
+      <a href="./results.json">Raw Benchmark JSON</a>
+    </div>
+
+    <div class="grid">
+      <div class="kpi"><div class="k">2D Kalman Late Edit (T=100k Py)</div><div class="v">512,577&times;</div><div class="s">8.72 &micro;s vs 4.47 s NumPy</div></div>
+      <div class="kpi"><div class="k">1D / 2D Kalman (T=500k Rust)</div><div class="v">6,239&times; / 4,297&times;</div><div class="s">0.97 / 2.91 &micro;s vs -O3 seq Rust</div></div>
+      <div class="kpi"><div class="k">500-Stream Firehose (50 Loud Traps)</div><div class="v">0.0% FDR</div><div class="s">10/10 TP &middot; 0/50 loud FP</div></div>
+      <div class="kpi"><div class="k">Agent Stream Digest</div><div class="v">2,510&times;</div><div class="s">~239 tok @100k &middot; 100% burst recall</div></div>
+    </div>
+
+    <h2>30-Second Quickstart</h2>
+    <pre><code>pip install backfold   # or: cargo install backfold-cli
+
+# Native CLI: 5 verified 100k-tick demos in 0.58 s
+backfold demo
+backfold digest stream.csv --col 1 --top-k 5
+backfold drill  stream.csv --start 22498 --end 22507</code></pre>
+
+    <h2>Verified Live Benchmarks (<code>max |diff| &le; 1e-12</code> vs. Sequential Oracles)</h2>
+    <table>
+      <thead>
+        <tr><th>Operator (T = 100,000 late edit)</th><th>backfold Py</th><th>Ecosystem Baseline</th><th>Speedup</th><th>Rust vs -O3 Rust</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>2D Constant-Velocity Kalman</td><td>8.72 &micro;s</td><td>4,471,206 &micro;s (NumPy seq)</td><td class="good">512,577&times;</td><td class="good">847&times; (4,297&times; @500k)</td></tr>
+        <tr><td>Page CUSUM + O(log T) 1st Alarm</td><td>5.32 &micro;s</td><td>81,766 &micro;s (Py seq)</td><td class="good">15,378&times;</td><td class="good">269&times; (1,364&times; @500k)</td></tr>
+        <tr><td>CT Irregular-&Delta;t EWMA</td><td>5.03 &micro;s</td><td>5,204 &micro;s Pandas / 2,080 &micro;s NumPy</td><td class="good">1,034&times; / 413&times;</td><td class="good">932&times; (4,487&times; @500k)</td></tr>
+        <tr><td>8D Discounted Ridge (delayed label)</td><td>17.47 &micro;s</td><td>9,899 &micro;s SciPy / 99,306 &micro;s River@10k</td><td class="good">567&times; / 6,618&times;</td><td class="good">652&times;</td></tr>
+        <tr><td>106-bit Compensated Moments</td><td>10.63 &micro;s</td><td>1,555 &micro;s Pandas / 966 &micro;s NumPy / 301 &micro;s Polars</td><td class="good">146&times; / 91&times; / 28&times;</td><td class="good">93&times; (418&times; @500k)</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Honest Crossover</h2>
+    <p>
+      For strictly append-only, single-pass, in-order aggregation with zero retractions, zero late arrivals, zero range queries, and zero branching, a plain sequential loop wins on initial ingest. On <code>MomentsMonoid</code>, bulk tree build (<code>12.2 ms</code> @ 100k, <code>53.7 ms</code> @ 500k) breaks even against a single-pass <code>-O3</code> Rust loop after <strong>34&ndash;39 late edits or range queries</strong>.
+    </p>
+
+    <footer>
+      Apache-2.0 &middot; Pure Markdown docs for AI agents: <a href="./llms.txt">/llms.txt</a> &middot; <a href="./llms-full.txt">/llms-full.txt</a>
+    </footer>
+  </main>
+</body>
+</html>

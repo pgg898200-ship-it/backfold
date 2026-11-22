@@ -1,0 +1,56 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "backfold"
+version = "0.1.0"
+description = "Persistent O(log T) associative-monoid engine for out-of-order, retractable, forkable online statistical inference and agent stream compression"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+keywords = [
+    "streaming",
+    "time-series",
+    "online-learning",
+    "kalman-filter",
+    "changepoint",
+    "e-values",
+    "conformal",
+    "multi-agent",
+    "crdt",
+    "rust",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.optional-dependencies]
+numpy = ["numpy>=1.23"]
+bench = ["numpy>=1.23", "scipy>=1.10", "pandas>=2.0", "polars>=1.0", "river>=0.21"]
+dev = ["pytest>=8.0", "ruff>=0.6", "numpy>=1.23"]
+
+[project.urls]
+Homepage = "https://pgg898200-ship-it.github.io/backfold/"
+Repository = "https://github.com/pgg898200-ship-it/backfold"
+Documentation = "https://pgg898200-ship-it.github.io/backfold/llms-full.txt"
+Issues = "https://github.com/pgg898200-ship-it/backfold/issues"
+
+[tool.maturin]
+manifest-path = "crates/backfold-py/Cargo.toml"
+python-source = "python"
+module-name = "backfold._backfold"
+features = ["pyo3/extension-module"]
+strip = true

@@ -1,0 +1,14 @@
+[package]
+name = "backfold-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python bindings (PyO3) for backfold"
+
+[lib]
+name = "_backfold"
+crate-type = ["cdylib"]
+
+[dependencies]
+backfold-core = { path = "../backfold-core" }
+pyo3 = { version = "0.24", features = ["extension-module"] }

@@ -1,0 +1,13 @@
+/target
+/.venv
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+Cargo.lock
