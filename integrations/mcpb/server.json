@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pgg898200-ship-it/backfold",
+  "title": "Backfold",
+  "description": "Summarize local time-series CSVs, inspect time windows, smooth signals and compare channels.",
+  "repository": {
+    "url": "https://github.com/pgg898200-ship-it/backfold",
+    "source": "github"
+  },
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/pgg898200-ship-it/backfold/releases/download/v0.3.0/backfold-0.3.0.mcpb",
+      "fileSha256": "a3bbe14fbf17cebbbdf9aeff22bb2b25389d5972fc13d2e828eba3bbdd91c56a",
+      "transport": {"type": "stdio"}
+    }
+  ]
+}

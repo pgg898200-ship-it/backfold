@@ -1,0 +1,72 @@
+{
+  "manifest_version": "0.4",
+  "name": "backfold",
+  "display_name": "Backfold · local time-series analysis",
+  "version": "0.3.0",
+  "description": "Summarize a local time-series CSV, then inspect the original observations in a selected time range.",
+  "long_description": "Five local tools summarize a CSV, inspect a time window, smooth a signal, compare channels with PCA, and sift multiple streams. The server reads files at the paths you supply. Includes native executables for Linux x86-64, Apple Silicon macOS and Windows x86-64.",
+  "author": {
+    "name": "PGG Engineering",
+    "url": "https://github.com/pgg898200-ship-it/backfold"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pgg898200-ship-it/backfold"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "time series",
+    "CSV",
+    "telemetry",
+    "statistics",
+    "Kalman filter",
+    "PCA"
+  ],
+  "compatibility": {
+    "platforms": [
+      "linux",
+      "darwin",
+      "win32"
+    ]
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "bin/backfold-x86_64-unknown-linux-gnu",
+    "mcp_config": {
+      "command": "${__dirname}/bin/backfold-x86_64-unknown-linux-gnu",
+      "args": [
+        "mcp"
+      ],
+      "platform_overrides": {
+        "darwin": {
+          "command": "${__dirname}/bin/backfold-aarch64-apple-darwin"
+        },
+        "win32": {
+          "command": "${__dirname}/bin/backfold-x86_64-pc-windows-msvc.exe"
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "backfold_digest_csv",
+      "description": "Summarize a numeric time-series column and identify time windows to inspect."
+    },
+    {
+      "name": "backfold_drill_csv",
+      "description": "Return observations and summary statistics for an inclusive time window."
+    },
+    {
+      "name": "backfold_kalman_rts_csv",
+      "description": "Smooth a signal at selected timestamps using a Kalman filter and RTS smoother."
+    },
+    {
+      "name": "backfold_covariance_pca_csv",
+      "description": "Compare numeric columns using covariance and principal components."
+    },
+    {
+      "name": "backfold_ebh_sift_csv",
+      "description": "Sift multiple streams using e-values and a false discovery rate target."
+    }
+  ]
+}
