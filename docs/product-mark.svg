@@ -1,9 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img">
-  <title>A past event is revised. The solid blue suffix shows the statistic recalculated after that event.</title>
+  <title>A correction at the second event branches from the original timeline to a revised summary below.</title>
   <rect x="1" y="1" width="94" height="94" rx="4" fill="#FAFAFA"/>
-  <path d="M12 65L24 50 39 61" fill="none" stroke="#141619" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round" />
-  <path d="M39 61L53 43 66 51 82 33" fill="none" stroke="#555C65" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="3 5" />
-  <path d="M39 61L53 30 66 39 82 22" fill="none" stroke="#315BFF" stroke-width="3.7" stroke-linejoin="round" stroke-linecap="round" />
-  <circle cx="39" cy="61" r="4" fill="#141619" />
-  <path d="M38 74H82" fill="none" stroke="#DADDE1" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+  <path d="M12 27H80" fill="none" stroke="#141619" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round" />
+  <circle cx="12" cy="27" r="3.7" fill="#141619" />
+  <circle cx="52" cy="27" r="3.7" fill="#141619" />
+  <circle cx="68" cy="27" r="3.7" fill="#141619" />
+  <rect x="75" y="22" width="10" height="10" fill="none" stroke="#555C65" stroke-width="2.5" />
+  <path d="M32 32V58Q32 66 40 66H76" fill="none" stroke="#315BFF" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" />
+  <rect x="27" y="22" width="10" height="10" fill="#FAFAFA" stroke="#315BFF" stroke-width="3" />
+  <rect x="75" y="60" width="12" height="12" fill="#315BFF" />
 </svg>

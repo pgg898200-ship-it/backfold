@@ -1,4 +1,4 @@
-<img align="right" src="docs/product-mark.svg" width="88" height="88" alt="A past event is revised. The solid blue suffix shows the statistic recalculated after that event.">
+<img align="right" src="docs/product-mark.svg" width="88" height="88" alt="A correction at the second event branches from the original timeline to a revised summary below.">
 
 # Backfold
 
