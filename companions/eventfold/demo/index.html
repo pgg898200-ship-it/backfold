@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f5f5ef">
+  <title>EventFold SSE codec · Compare streaming LLM event bytes</title>
+  <meta name="description" content="Measure lossless event-at-a-time compression for LLM server-sent events. Inspect wire bytes locally and compare protocols on public, reproducible workloads.">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="mast"><div class="wrap mast-inner">
+    <span class="brand"><i class="logomark" aria-hidden="true"><i></i><i></i><i></i></i>EventFold</span>
+    <span class="version">Wire format <b>EFL1</b></span>
+  </div></header>
+  <main class="wrap">
+    <section class="intro">
+      <h1>SSE wire inspector</h1>
+      <p>See how many bytes EventFold can save between services by encoding each frame against the one before it. Your stream stays in this tab.</p>
+    </section>
+    <section class="summary" aria-label="Stream comparison">
+      <div class="stat"><span>Original stream</span><strong id="raw">—</strong></div>
+      <div class="stat"><span>EventFold stream</span><strong id="packed">—</strong></div>
+      <div class="stat delta"><span id="delta-label">Bytes saved</span><strong id="delta">—</strong></div>
+      <div class="verify" aria-live="polite"><i id="check" aria-hidden="true"></i><div><strong id="status">Waiting for input</strong><small id="frame-count"></small></div></div>
+    </section>
+    <div id="error" role="alert" hidden></div>
+    <div class="workspace">
+      <section class="panel input-panel">
+        <div class="panel-heading"><h2>Source stream</h2><label class="file-link">Open file<input type="file" id="file"></label></div>
+        <div class="source-tools"><label for="samples">Example</label>
+          <select id="samples"><option value="completion">Chat completion</option><option value="tools">Streamed tool call</option><option value="interleaved">Agent progress events</option><option value="mixed">Mixed events</option><option value="custom" disabled>Custom stream</option></select>
+        </div>
+        <label class="sr-only" for="source">SSE source bytes as UTF-8 text</label>
+        <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+        <div class="footnote">Paste UTF-8 SSE or open a file to preserve its exact bytes. Up to 512 KiB and 8,192 frames.</div>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><h2>Encoded frames</h2><span class="header-info">4 B header <b>EFL1</b></span></div>
+        <div class="table-scroll">
+          <table><caption class="sr-only">Wire size per frame. Select a frame to inspect its bytes.</caption>
+            <thead><tr><th scope="col">Frame</th><th scope="col">Encoding</th><th scope="col">Source</th><th scope="col">Wire</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="pager"><span id="range"></span><div><button id="prev" aria-label="Previous frames">←</button><button id="next" aria-label="Next frames">→</button></div></div>
+      </section>
+    </div>
+    <section class="detail" aria-label="Selected frame bytes">
+      <div class="detail-heading"><h2 id="detail-title">Frame detail</h2><span id="wire-offset"></span></div>
+      <div class="detail-body"><div><h3>Encoded bytes <span>HEX</span></h3><pre id="hex"></pre></div><div><h3>Decoded frame <span id="view-format">UTF-8</span></h3><pre id="decoded"></pre></div></div>
+    </section>
+    <p class="method"><b>How to read the result</b> · The built-in examples use synthetic events. Wire size includes the four-byte stream header and every record header. Patch records copy a shared prefix and suffix from the previous frame. A two-splice record can also reuse an unchanged middle span. An exact repeat takes one byte. Transport headers are outside this comparison.</p>
+    <section class="install">
+      <h2>Try it on your gateway</h2>
+      <p>The CLI compares your capture with persistent gzip and WebSocket DEFLATE. The results depend on how often adjacent events share an envelope.</p>
+      <pre><code>python -m pip install 'git+https://github.com/pgg898200-ship-it/backfold.git@eventfold-v0.1#subdirectory=companions/eventfold'
+python -m eventfold compare &lt; capture.sse</code></pre>
+      <nav aria-label="Release resources"><a href="https://github.com/pgg898200-ship-it/backfold/tree/eventfold-v0.1/companions/eventfold">Source and integration</a> <a href="https://github.com/pgg898200-ship-it/backfold/blob/eventfold-v0.1/companions/eventfold/bench/summary.csv">Benchmark results</a> <a href="https://github.com/pgg898200-ship-it/backfold/issues/new?title=EventFold%20field%20report">Share field measurements</a></nav>
+    </section>
+  </main>
+</body>
+</html>

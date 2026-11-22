@@ -1,0 +1,3 @@
+include eventfold.h
+include examples/http_bridge.py
+include docs/format.md
