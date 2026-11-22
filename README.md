@@ -1,4 +1,4 @@
-<img align="right" src="docs/product-mark.svg" width="88" height="88" alt="A replacement panel fits into a folded history of readings.">
+<img align="right" src="docs/product-mark.svg" width="88" height="88" alt="A past event is revised. The solid blue suffix shows the statistic recalculated after that event.">
 
 # Backfold
 
