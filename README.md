@@ -58,4 +58,4 @@ At 100,000 readings, the recorded Python moments benchmark took **6.06 µs media
 
 The results also include native Rust baselines, range queries, a 64-fork workload and CSV digest evaluation. Run `./target/release/backfold bench` for native timings on your machine. [Benchmark method](docs/BENCHMARK_PROTOCOL.md) · [Recorded results (JSON)](benchmarks/results.json) · [Sequential reference implementations](benchmarks/oracles.py)
 
-[Source license](LICENSE) · [CI](https://github.com/pgg898200-ship-it/backfold/actions/workflows/ci.yml) · [PGG engineering tool directory](https://github.com/pgg898200-ship-it/streamsieve/blob/main/PRODUCTS.md)
+[Source license](LICENSE) · [CI](https://github.com/pgg898200-ship-it/backfold/actions/workflows/ci.yml) · [Compare related tools](docs/PRODUCTS.md) · [PGG engineering tool directory](https://github.com/pgg898200-ship-it/streamsieve/blob/main/PRODUCTS.md)

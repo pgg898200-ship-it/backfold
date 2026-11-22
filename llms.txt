@@ -11,6 +11,8 @@
 - [Coding-agent skill](https://github.com/pgg898200-ship-it/backfold/blob/main/skills/backfold/SKILL.md) — Task-specific invocation guidance.
 - [Runnable recipes](https://github.com/pgg898200-ship-it/backfold/tree/main/examples) — RTS smoothing, PCA, anomaly scoring, bitemporal access and screening across streams.
 
+- [Choosing between related PGG tools](https://github.com/pgg898200-ship-it/backfold/blob/main/docs/PRODUCTS.md) — Compare retrieval, state replication, event subscriptions and cache planning by input contract.
+
 ## Integration and evidence
 
 Backfold sits between an event consumer and a statistics query. The application supplies timestamped observations and retains any durable event log. Each supported operator summarizes events in an ordered tree. For fixed dimension a single correction updates O(log T) nodes. Forking shares the tree in O(1). A sequential pass is cheaper to build for one-off aggregation.
