@@ -6,6 +6,7 @@ mod mcp;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::str::FromStr;
 use std::time::Instant;
 
 use backfold_core::digest::build_stream_digest;
@@ -1192,17 +1193,32 @@ fn read_csv_columns(
     Ok((ts, vals))
 }
 
+fn flag_value<T: FromStr>(args: &mut std::slice::Iter<'_, String>, flag: &str) -> T {
+    let Some(value) = args.next() else {
+        eprintln!("error: {flag} needs a value");
+        std::process::exit(2);
+    };
+    value.parse().unwrap_or_else(|_| {
+        eprintln!("error: invalid value for {flag}: {value}");
+        std::process::exit(2);
+    })
+}
+
 fn print_help() {
     println!(
-        "backfold {} — O(log T) out-of-order streaming inference, RTS smoothing, MCP server & stream compression\n",
+        "backfold {} — statistics for streams that change after arrival",
         env!("CARGO_PKG_VERSION")
     );
-    println!("USAGE:");
-    println!("  backfold demo");
-    println!("  backfold bench [--json]");
-    println!("  backfold digest <file.csv> [--time-col 0] [--value-col 1] [--top-k 5] [--threshold 10.0] [--json]");
-    println!("  backfold drill <file.csv> --start <ts> --end <ts> [--time-col 0] [--value-col 1]");
-    println!("  backfold mcp                      Run zero-dependency stdio MCP JSON-RPC 2.0 server");
+    println!();
+    println!("  backfold demo                  Try late edits, forks and range queries on sample data");
+    println!("  backfold digest <file.csv>     Summarize one numeric time series");
+    println!("  backfold drill <file.csv>      Print readings in a timestamp range");
+    println!("  backfold bench [--json]        Compare late edits with sequential replay");
+    println!("  backfold mcp                   Start the stdio MCP server");
+    println!();
+    println!("CSV columns (zero-based): --time-col 0 --value-col 1");
+    println!("Digest options: --top-k 5 --threshold 10.0 --json");
+    println!("Drill bounds (inclusive): --start <timestamp> --end <timestamp>");
 }
 
 fn main() {
@@ -1234,32 +1250,19 @@ fn main() {
             let mut top_k = 5usize;
             let mut threshold = 10.0f64;
             let mut as_json = false;
-            let mut i = 3;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--time-col" => {
-                        i += 1;
-                        time_col = args[i].parse().expect("invalid --time-col");
-                    }
-                    "--value-col" => {
-                        i += 1;
-                        value_col = args[i].parse().expect("invalid --value-col");
-                    }
-                    "--top-k" => {
-                        i += 1;
-                        top_k = args[i].parse().expect("invalid --top-k");
-                    }
-                    "--threshold" => {
-                        i += 1;
-                        threshold = args[i].parse().expect("invalid --threshold");
-                    }
+            let mut flags = args[3..].iter();
+            while let Some(flag) = flags.next() {
+                match flag.as_str() {
+                    "--time-col" => time_col = flag_value(&mut flags, flag),
+                    "--value-col" => value_col = flag_value(&mut flags, flag),
+                    "--top-k" => top_k = flag_value(&mut flags, flag),
+                    "--threshold" => threshold = flag_value(&mut flags, flag),
                     "--json" => as_json = true,
                     other => {
                         eprintln!("unknown flag: {other}");
                         std::process::exit(2);
                     }
                 }
-                i += 1;
             }
             let (ts, vals) = read_csv_columns(path, time_col, value_col).unwrap_or_else(|e| {
                 eprintln!("error: {e}");
@@ -1285,31 +1288,18 @@ fn main() {
             let mut end = i64::MAX;
             let mut time_col = 0usize;
             let mut value_col = 1usize;
-            let mut i = 3;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--start" => {
-                        i += 1;
-                        start = args[i].parse().expect("invalid --start");
-                    }
-                    "--end" => {
-                        i += 1;
-                        end = args[i].parse().expect("invalid --end");
-                    }
-                    "--time-col" => {
-                        i += 1;
-                        time_col = args[i].parse().expect("invalid --time-col");
-                    }
-                    "--value-col" => {
-                        i += 1;
-                        value_col = args[i].parse().expect("invalid --value-col");
-                    }
+            let mut flags = args[3..].iter();
+            while let Some(flag) = flags.next() {
+                match flag.as_str() {
+                    "--start" => start = flag_value(&mut flags, flag),
+                    "--end" => end = flag_value(&mut flags, flag),
+                    "--time-col" => time_col = flag_value(&mut flags, flag),
+                    "--value-col" => value_col = flag_value(&mut flags, flag),
                     other => {
                         eprintln!("unknown flag: {other}");
                         std::process::exit(2);
                     }
                 }
-                i += 1;
             }
             let (ts, vals) = read_csv_columns(path, time_col, value_col).unwrap_or_else(|e| {
                 eprintln!("error: {e}");
