@@ -3,24 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>backfold — Persistent O(log T) Out-of-Order Streaming Inference, Exact RTS Smoother &amp; MCP Server</title>
-  <meta name="description" content="Persistent O(log T) associative-monoid engine for out-of-order, retractable, forkable online statistical inference (Kalman + exact RTS smoother + Bayesian changepoint locator, 106-bit Covariance/PCA/Mahalanobis, CUSUM, EWMA, Ridge, anytime e-values + e-BH FDR), native stdio MCP server, and <300-token agent stream compression. Pure safe Rust + zero-copy Python + WebAssembly, Apache-2.0." />
+  <title>Backfold · Time-series statistics for late data</title>
+  <meta name="description" content="Change an earlier sensor reading and see the revised Kalman estimate in your browser. Embed Backfold in a Rust or Python event consumer to update statistics after late arrivals, corrections and retractions." />
   <link rel="canonical" href="https://pgg898200-ship-it.github.io/backfold/" />
   <link rel="alternate" type="text/markdown" title="llms.txt" href="https://pgg898200-ship-it.github.io/backfold/llms.txt" />
 
   <!-- OpenGraph / Social Preview -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://pgg898200-ship-it.github.io/backfold/" />
-  <meta property="og:title" content="backfold — O(log T) Retractable Kalman/RTS Smoother, Streaming PCA &amp; Agent MCP Server" />
-  <meta property="og:description" content="578,868x faster than NumPy RTS (11.1 us @ 100k, diff 1.5e-14); 8,152x faster than -O3 seq Rust @ 500k; 0.0% FDR on 500 streams; native MCP server &amp; live WebAssembly playground." />
+  <meta property="og:title" content="Backfold · Time-series statistics for late data" />
+  <meta property="og:description" content="Change an earlier sensor reading and see the revised Kalman estimate in your browser. Embed Backfold in a Rust or Python event consumer to update statistics after late arrivals, corrections and retractions." />
   <meta property="og:image" content="https://pgg898200-ship-it.github.io/backfold/og-card.png" />
+  <meta property="og:image:alt" content="Correcting a reading from 40 to 7 changes the mean from 18 to 7 on a fork of the stream." />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
 
   <!-- Twitter / X Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="backfold — O(log T) Retractable Streaming Inference &amp; Exact RTS Smoother" />
-  <meta name="twitter:description" content="Pure safe Rust + zero-copy Python + native MCP server + live in-browser WebAssembly playground. Apache-2.0." />
+  <meta name="twitter:title" content="Backfold · Time-series statistics for late data" />
+  <meta name="twitter:description" content="Change an earlier sensor reading and see the revised Kalman estimate in your browser. Embed Backfold in a Rust or Python event consumer to update statistics after late arrivals, corrections and retractions." />
   <meta name="twitter:image" content="https://pgg898200-ship-it.github.io/backfold/og-card.png" />
 
   <!-- Structured Data for Search & AI Discovery -->
@@ -35,14 +36,14 @@
     "url": "https://pgg898200-ship-it.github.io/backfold/",
     "programmingLanguage": ["Rust", "Python", "WebAssembly"],
     "runtimePlatform": ["Linux", "macOS", "Windows", "WebAssembly"],
-    "description": "Persistent O(log T) associative-monoid engine for out-of-order, retractable, forkable online statistical inference, exact RTS Kalman smoothing, streaming PCA, Bayesian changepoint localization, anytime-valid e-BH FDR control, native MCP server, and lossless-recoverable <300-token agent stream digests."
+    "description": "Change an earlier sensor reading and see the revised Kalman estimate in your browser. Embed Backfold in a Rust or Python event consumer to update statistics after late arrivals, corrections and retractions."
   }
   </script>
 
   <style>
     :root {
-      --bg: #ffffff; --card: #f8fafc; --fg: #0f172a; --muted: #475569;
-      --border: #e2e8f0; --accent: #0f766e; --accent-soft: rgba(15, 118, 110, 0.12);
+      --bg: #f9f5e8; --card: #fffdf5; --fg: #253831; --muted: #4b5b50;
+      --border: #c3c7b6; --accent: #954323; --accent-soft: rgba(180, 83, 42, .09);
       --good: #15803d; --warn: #d97706; --coral: #e11d48; --code-bg: #f1f5f9;
       --canvas-bg: #f8fafc; --grid: #e2e8f0;
     }
@@ -57,7 +58,7 @@
     * { box-sizing: border-box; }
     body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
     .wrap { max-width: 1040px; margin: 0 auto; padding: 2.25rem 1.25rem 4rem; }
-    h1 { font-size: 2.35rem; margin: 0 0 .4rem; letter-spacing: -.025em; }
+    h1 { font-family: Georgia, serif; font-weight: 500; font-size: clamp(3.1rem, 8vw, 6.5rem); line-height: 1; margin: 0 0 .64rem; letter-spacing: -.06em; }
     h2 { font-size: 1.28rem; margin: 2.35rem 0 .8rem; border-bottom: 1px solid var(--border); padding-bottom: .35rem; }
     p.lead { color: var(--muted); font-size: 1.04rem; margin: 0 0 1.2rem; }
     .badges { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: 1.1rem; }
@@ -75,7 +76,7 @@
     /* Live WASM Playground */
     .playground { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.15rem 1.25rem; margin: 1.5rem 0; }
     .pg-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; margin-bottom: .85rem; }
-    .pg-title { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: .55rem; }
+    .pg-title { flex-wrap: wrap; font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: .55rem; }
     .pg-status { font-family: ui-monospace, monospace; font-size: .76rem; padding: .2rem .55rem; border-radius: 999px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
     .pg-controls { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .9rem; }
     button.btn {
@@ -107,56 +108,38 @@
     th:first-child, td:first-child { text-align: left; }
     th { color: var(--muted); font-weight: 600; }
     .good { color: var(--good); font-weight: 600; }
-    .cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+    .cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem; }
+    .table-scroll { overflow-x: auto; }
     footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--border); font-size: .84rem; color: var(--muted); }
   </style>
 </head>
 <body>
   <main class="wrap">
-    <div class="badges">
-      <span class="badge hi">v0.3.0</span>
-      <span class="badge">Apache-2.0</span>
-      <span class="badge">#![forbid(unsafe_code)]</span>
-      <span class="badge">Exact O(log T) RTS Smoother</span>
-      <span class="badge">Native MCP Server</span>
-      <span class="badge">Live Rust WebAssembly</span>
-    </div>
-    <h1>backfold</h1>
-    <p class="lead">
-      Persistent <code>O(log T)</code> associative-monoid engine for out-of-order, retractable, forkable online statistical inference, exact Rauch&ndash;Tung&ndash;Striebel (RTS) Bayesian smoothing &amp; changepoint localization, 106-bit streaming PCA, native MCP agent tooling, and <code>&lt;300</code>-token lossless-recoverable stream compression.
-    </p>
-    <div class="links">
-      <a href="https://github.com/pgg898200-ship-it/backfold">GitHub Repo</a>
-      <a href="https://pypi.org/project/backfold/">PyPI (pip install backfold)</a>
-      <a href="./SUBNORMAL_KALMAN.md">Post-Mortem: Subnormals &amp; Anchor-Centered RTS</a>
-      <a href="./llms.txt">llms.txt</a>
-      <a href="./llms-full.txt">llms-full.txt</a>
-      <a href="./SKILL.md">SKILL.md</a>
-      <a href="./results.json">results.json</a>
-    </div>
-
-    <div class="grid">
-      <div class="kpi"><div class="k">RTS Smooth + log p(y) (T=100k Py)</div><div class="v">578,868&times;</div><div class="s">11.12 &micro;s vs 6.44 s NumPy RTS &middot; 1.47e-14 diff</div></div>
-      <div class="kpi"><div class="k">Rust vs -O3 Seq Rust (T=500k)</div><div class="v">8,152&times; / 3,694&times;</div><div class="s">0.81 &micro;s EWMA &middot; 0.98 &micro;s K1D &middot; 5.37 &micro;s RTS</div></div>
-      <div class="kpi"><div class="k">500-Stream Firehose + 50 Traps</div><div class="v">0.0% FDR</div><div class="s">10/10 TP &middot; 0 FP in 107.4 ms (vs 84.1% naive)</div></div>
-      <div class="kpi"><div class="k">64-Agent Forks &amp; Agent Digest</div><div class="v">3,326&times; / 2,510&times;</div><div class="s">1.41 ms (64 forks) &middot; ~239 tok @100k &middot; MCP built-in</div></div>
-    </div>
+    <h1>Backfold</h1>
+    <p class="lead"><strong>Update a time-series statistic when an old reading changes.</strong> This sensor stream has 20,000 readings. Add a late reading, then compare the revised trajectory with a full replay.</p>
+    <nav class="links" aria-label="Backfold resources">
+      <a href="https://github.com/pgg898200-ship-it/backfold#correct-one-reading-in-python">Python quickstart</a>
+      <a href="https://github.com/pgg898200-ship-it/backfold">Source on GitHub</a>
+      <a href="./llms.txt">Agent guide</a>
+      <a href="./llms-full.txt">API reference</a>
+      <a href="./results.json">Benchmark data</a>
+    </nav>
 
     <!-- LIVE REAL-RUST WEBASSEMBLY INTERACTIVE PLAYGROUND -->
     <section class="playground" aria-label="Live WebAssembly Playground">
       <div class="pg-head">
         <div class="pg-title">
-          <span>Live In-Browser Rust WebAssembly Playground</span>
+          <span>Edit the sensor stream</span>
           <span class="pg-status" id="wasmStatus">Loading backfold_wasm.wasm...</span>
         </div>
       </div>
 
       <div class="pg-controls">
-        <button class="btn primary" id="btnGlitch" disabled>Inject +15&sigma; Late Glitch @ t=6,666</button>
-        <button class="btn" id="btnRetract" disabled>Retract Tick @ t=6,666</button>
-        <button class="btn" id="btnShock" disabled>Move Regime Shock (Random Off-Grid Tick)</button>
-        <button class="btn primary" id="btnBench" disabled>Benchmark YOUR Browser (WASM vs JS Seq RTS)</button>
-        <button class="btn" id="btnDigest" disabled>Live &lt;300-Token Agent Digest</button>
+        <button class="btn primary" id="btnGlitch" disabled>Add a late reading (+15&sigma;)</button>
+        <button class="btn" id="btnRetract" disabled>Retract that reading</button>
+        <button class="btn" id="btnShock" disabled>Move the changepoint</button>
+        <button class="btn primary" id="btnBench" disabled>Compare with full replay</button>
+        <button class="btn" id="btnDigest" disabled>Show agent digest</button>
         <button class="btn" id="btnReset" disabled>Reset</button>
       </div>
 
@@ -172,7 +155,7 @@
           <div class="sub">O(1) at root &middot; Anchor-Centered</div>
         </div>
         <div class="stat">
-          <div class="l">Localized Shock (Zero-Blind-Spot)</div>
+          <div class="l">Estimated changepoint</div>
           <div class="val" id="stCp">--</div>
           <div class="sub" id="stCpBf">Cached-subtree scan + exact logBF</div>
         </div>
@@ -206,20 +189,16 @@
       </div>
     </section>
 
-    <h2>30-Second Quickstart &amp; Native MCP Server</h2>
+    <h2>Use Backfold in your stack</h2>
     <div class="cols2">
       <div>
-        <strong>Python &amp; Native CLI</strong>
-        <pre><code>pip install backfold   # Linux, macOS, Windows (Py 3.10-3.13)
-
-# 7 live verified 100k-tick demos in 0.54 s
-backfold demo
-backfold digest stream.csv --value-col 1 --top-k 5
-backfold drill  stream.csv --start 22498 --end 22507
-backfold bench</code></pre>
+        <strong>Python library</strong>
+        <pre><code>python -m pip install backfold</code></pre>
+        <p>Add timestamped observations in the event consumer, then query the revised statistics. <a href="https://github.com/pgg898200-ship-it/backfold#correct-one-reading-in-python">Run the Python example</a>.</p>
       </div>
       <div>
-        <strong>Zero-Dependency Stdio MCP Server (Claude / Cursor / Codex)</strong>
+        <strong>Native MCP server for local CSV files</strong>
+        <p><a href="https://github.com/pgg898200-ship-it/backfold#give-an-agent-a-csv">Build the CLI</a>, place it on your PATH and use this client configuration.</p>
         <pre><code>{
   "mcpServers": {
     "backfold": {
@@ -235,7 +214,7 @@ backfold bench</code></pre>
     </p>
 
     <h2>Verified Live Benchmarks (<code>v0.3.0</code>, <code>max |diff| &le; 1e-12</code> vs. Sequential Oracles)</h2>
-    <table>
+    <div class="table-scroll"><table>
       <thead>
         <tr><th>Operator (T = 100,000 late edit)</th><th>backfold Py</th><th>Ecosystem Baseline</th><th>Python Speedup</th><th>Rust vs -O3 Seq Rust</th></tr>
       </thead>
@@ -250,7 +229,7 @@ backfold bench</code></pre>
         <tr><td>106-bit Compensated Moments</td><td>6.06 &micro;s</td><td>1,293 &micro;s Pandas / 730 &micro;s NumPy / 273 &micro;s Polars</td><td class="good">213&times; / 121&times; / 45&times;</td><td class="good">259&times; (1,288&times; @500k)</td></tr>
         <tr><td>Arbitrary 60% Range Query (Moments)</td><td>8.57 &micro;s</td><td>35.54 &micro;s (NumPy slice)</td><td class="good">4.1&times;</td><td class="good">154&times; (664&times; @500k)</td></tr>
       </tbody>
-    </table>
+    </table></div>
 
     <h2>Honest Crossover</h2>
     <p>
@@ -560,7 +539,7 @@ backfold bench</code></pre>
       const snap = wasmExec({ cmd: "upsert", t: 6666, y: basePt.smoothed + 15.0, query_t: 6666, n_plot: 160, n_scan: 64 });
       const dtMs = performance.now() - t0;
       render(snap, dtMs.toFixed(2) + " ms (upsert+160 RTS)");
-      $("stOpNote").textContent = "Injected +15σ late glitch @ t=6,666 (click Benchmark for pure O(log T) µs)";
+      $("stOpNote").textContent = "Injected +15σ late glitch @ t=6,666 (compare with full replay for timings)";
     });
 
     $("btnRetract").addEventListener("click", () => {
