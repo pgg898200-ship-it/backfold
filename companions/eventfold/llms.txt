@@ -1,0 +1,19 @@
+# EventFold SSE codec
+
+Event-at-a-time lossless compression for a controlled inference-server-to-gateway hop. Both ends use EFL1. Ordinary SSE clients receive the original byte stream from the gateway.
+
+## Which workload fits?
+
+Use the local comparison command on an independent SSE connection. The native codec retains the last frame and can reuse prefix, suffix and one unchanged interior span. Stable chat-delta envelopes are its best measured fit. Mixed tool lifecycles and long first events often compress better with persistent gzip, zstd or WebSocket DEFLATE. The native measurements do not predict Python application latency, model speed or network throughput.
+
+## Try and verify
+
+- [Source and installation](https://github.com/pgg898200-ship-it/backfold/tree/eventfold-v0.1/companions/eventfold)
+- [Header-only C99 implementation](https://github.com/pgg898200-ship-it/backfold/blob/eventfold-v0.1/companions/eventfold/eventfold.h)
+- [Full per-stream benchmark data](https://github.com/pgg898200-ship-it/backfold/blob/eventfold-v0.1/companions/eventfold/bench/results.csv)
+- [Independent holdout provenance](https://github.com/pgg898200-ship-it/backfold/tree/eventfold-v0.1/companions/eventfold/fixtures/holdout)
+- [Protocol](https://github.com/pgg898200-ship-it/backfold/blob/eventfold-v0.1/companions/eventfold/docs/format.md)
+
+Install using python -m pip install 'git+https://github.com/pgg898200-ship-it/backfold.git@eventfold-v0.1#subdirectory=companions/eventfold'. Run python -m eventfold compare < capture.sse. For round-trip verification, run python -m eventfold pack < capture.sse | python -m eventfold unpack > restored.sse and compare the files. No accounts or API keys are needed to compare an existing capture.
+
+For an existing vLLM server, its class-middleware argument accepts --middleware eventfold.asgi.EventFoldMiddleware. A paired internal client opts in with X-Accept-EventFold: 1 and reads application/x-eventfold. FastAPI/Uvicorn integration and concurrent delivery were tested locally. See examples/asgi.md and examples/check_asgi.py in the source.

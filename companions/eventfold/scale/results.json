@@ -1,0 +1,110 @@
+{
+  "compiler": "c++ (Debian 14.2.0-19) 14.2.0",
+  "system": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "median_warm_ns_per_event": {
+    "eventfold": 43.76,
+    "gzip-w12-m3": 3712.69
+  },
+  "runs": [
+    {
+      "codec": "eventfold",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2008282,
+      "encoder_state_bytes": 440320,
+      "warm_ns_per_event": 45.45
+    },
+    {
+      "codec": "gzip-w12-m3",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2789314,
+      "encoder_state_bytes": 54362112,
+      "warm_ns_per_event": 2736.89
+    },
+    {
+      "codec": "gzip-w12-m3",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2789314,
+      "encoder_state_bytes": 54362112,
+      "warm_ns_per_event": 2618.09
+    },
+    {
+      "codec": "eventfold",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2008282,
+      "encoder_state_bytes": 440320,
+      "warm_ns_per_event": 47.03
+    },
+    {
+      "codec": "eventfold",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2008282,
+      "encoder_state_bytes": 440320,
+      "warm_ns_per_event": 43.76
+    },
+    {
+      "codec": "gzip-w12-m3",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2789314,
+      "encoder_state_bytes": 54362112,
+      "warm_ns_per_event": 3909.36
+    },
+    {
+      "codec": "gzip-w12-m3",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2789314,
+      "encoder_state_bytes": 54362112,
+      "warm_ns_per_event": 3883.64
+    },
+    {
+      "codec": "eventfold",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2008282,
+      "encoder_state_bytes": 440320,
+      "warm_ns_per_event": 27.3
+    },
+    {
+      "codec": "eventfold",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2008282,
+      "encoder_state_bytes": 440320,
+      "warm_ns_per_event": 27.54
+    },
+    {
+      "codec": "gzip-w12-m3",
+      "streams": 2048,
+      "rounds": 96,
+      "events": 196608,
+      "raw_bytes": 36432948,
+      "wire_bytes": 2789314,
+      "encoder_state_bytes": 54362112,
+      "warm_ns_per_event": 3712.69
+    }
+  ]
+}

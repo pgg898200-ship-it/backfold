@@ -1,0 +1,6 @@
+include eventfold.h
+include Makefile
+include cli/main.c
+recursive-include examples *.py *.md
+include docs/format.md
+graft fixtures

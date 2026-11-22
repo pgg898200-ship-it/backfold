@@ -1,0 +1,51 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_00d64fa806f333310169fab1be69d081a08f8285661855594c","object":"response","created_at":1778037182,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"effort":"low","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Multiply two numbers.","name":"multiply","parameters":{"properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"],"type":"object","additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_00d64fa806f333310169fab1be69d081a08f8285661855594c","object":"response","created_at":1778037182,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"effort":"low","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Multiply two numbers.","name":"multiply","parameters":{"properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"],"type":"object","additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","type":"function_call","status":"in_progress","arguments":"","call_id":"call_sVidsfFJ6zlzRpelrPkTPlpd","name":"multiply"},"output_index":0,"sequence_number":2}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"ReLAoBL6oNRsXA","output_index":0,"sequence_number":3}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"a","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"oZA1PK3x65X0w51","output_index":0,"sequence_number":4}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\":","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"WFzXP9CAvnsSdE","output_index":0,"sequence_number":5}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"123","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"3bk9yszS1TEHx","output_index":0,"sequence_number":6}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"1","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"ckqcfb2NtXm34XT","output_index":0,"sequence_number":7}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":",\"","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"cspustnrzHoiSV","output_index":0,"sequence_number":8}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"b","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"HhO4w36skjtIxaU","output_index":0,"sequence_number":9}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\":","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"SnDoVlFiXfYxtl","output_index":0,"sequence_number":10}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"233","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"arziGMMxMM5qo","output_index":0,"sequence_number":11}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"1","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"obhmaTA5ZilaAQc","output_index":0,"sequence_number":12}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"}","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","obfuscation":"Mezf0KdDroRLDUI","output_index":0,"sequence_number":13}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","arguments":"{\"a\":1231,\"b\":2331}","item_id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","output_index":0,"sequence_number":14}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","type":"function_call","status":"completed","arguments":"{\"a\":1231,\"b\":2331}","call_id":"call_sVidsfFJ6zlzRpelrPkTPlpd","name":"multiply"},"output_index":0,"sequence_number":15}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_00d64fa806f333310169fab1be69d081a08f8285661855594c","object":"response","created_at":1778037182,"status":"completed","background":false,"completed_at":1778037183,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[{"id":"fc_00d64fa806f333310169fab1bf324481a0852cda3180856290","type":"function_call","status":"completed","arguments":"{\"a\":1231,\"b\":2331}","call_id":"call_sVidsfFJ6zlzRpelrPkTPlpd","name":"multiply"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"effort":"low","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Multiply two numbers.","name":"multiply","parameters":{"properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"],"type":"object","additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":58,"input_tokens_details":{"cached_tokens":0},"output_tokens":23,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":81},"user":null,"metadata":{}},"sequence_number":16}
+
