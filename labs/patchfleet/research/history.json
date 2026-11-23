@@ -1,0 +1,102 @@
+[
+  {
+    "project": "scikit-image/scikit-image",
+    "pull": "7386",
+    "base": "ea6c1c637d8e8c377a5e76bd82a7e9a74f9b7b89",
+    "head": "1bd2bb953b75126c58b425ae3477fb11221b80fa",
+    "exact": [
+      "doc/examples/features_detection/plot_windowed_histogram.py",
+      "tools/mailmap.py"
+    ],
+    "partial_or_different": [],
+    "unchanged_by_rule": []
+  },
+  {
+    "project": "scikit-image/scikit-image",
+    "pull": "7118",
+    "base": "3aeefa39242e6b19004867b7e79aeab7b8cbd6fd",
+    "head": "894974a6a471982f0c908f2568c382e6364eaa16",
+    "exact": [],
+    "partial_or_different": [
+      "skimage/util/dtype.py"
+    ],
+    "unchanged_by_rule": []
+  },
+  {
+    "project": "mne-tools/mne-python",
+    "pull": "12353",
+    "base": "16c17b4dba8381615d57267c01f1f2f310fc522c",
+    "head": "ec804a5a8fbbc6034dbd07f18aefb70e3bde0062",
+    "exact": [],
+    "partial_or_different": [],
+    "unchanged_by_rule": [
+      "mne/_fiff/open.py",
+      "mne/decoding/tests/test_search_light.py",
+      "mne/epochs.py",
+      "mne/fixes.py",
+      "mne/preprocessing/_annotate_amplitude.py",
+      "mne/preprocessing/artifact_detection.py",
+      "mne/preprocessing/interpolate.py",
+      "mne/preprocessing/tests/test_realign.py",
+      "mne/proj.py",
+      "mne/report/report.py",
+      "mne/source_space/_source_space.py",
+      "mne/stats/cluster_level.py",
+      "mne/stats/tests/test_cluster_level.py",
+      "mne/tests/test_annotations.py",
+      "mne/utils/numerics.py",
+      "mne/viz/_mpl_figure.py",
+      "mne/viz/evoked_field.py"
+    ]
+  },
+  {
+    "project": "Allen-Tildesley/examples",
+    "pull": "23",
+    "base": "6e16f8e60d6c9799b41a64fdd0cd72cf367f3d91",
+    "head": "7aaab92f2d0bf381b640832e8fc11cbd364268e4",
+    "exact": [
+      "python_examples/averages_module.py",
+      "python_examples/config_io_module.py",
+      "python_examples/corfun.py",
+      "python_examples/diffusion.py",
+      "python_examples/diffusion_test.py",
+      "python_examples/eos_lj_module.py",
+      "python_examples/error_calc.py",
+      "python_examples/ewald.py",
+      "python_examples/ewald_module.py",
+      "python_examples/fft3dwrap.py",
+      "python_examples/grint.py",
+      "python_examples/hit_and_miss.py",
+      "python_examples/initialize.py",
+      "python_examples/maths_module.py",
+      "python_examples/mc_chain_lj_module.py",
+      "python_examples/mc_chain_nvt_sw.py",
+      "python_examples/mc_chain_sw_module.py",
+      "python_examples/mc_chain_wl_sw.py",
+      "python_examples/mc_gibbs_lj.py",
+      "python_examples/mc_nvt_poly_lj.py",
+      "python_examples/mc_poly_lj_module.py",
+      "python_examples/md_chain_lj_module.py",
+      "python_examples/md_npt_lj.py",
+      "python_examples/md_nve_hs.py",
+      "python_examples/md_nvt_lj.py",
+      "python_examples/md_nvt_poly_lj.py",
+      "python_examples/md_poly_lj_module.py",
+      "python_examples/mesh.py",
+      "python_examples/mesh_module.py",
+      "python_examples/qmc_pi_lj.py",
+      "python_examples/qmc_pi_sho.py",
+      "python_examples/qmc_walk_sho.py",
+      "python_examples/sample_mean.py",
+      "python_examples/test_pot_atom.py",
+      "python_examples/test_pot_bend.py",
+      "python_examples/test_pot_linear.py",
+      "python_examples/test_pot_twist.py",
+      "python_examples/wl_hist.py"
+    ],
+    "partial_or_different": [
+      "python_examples/t_tensor.py"
+    ],
+    "unchanged_by_rule": []
+  }
+]

@@ -1,0 +1,45 @@
+name: Reproduce Patchfleet
+on:
+  push:
+    paths:
+      - 'labs/patchfleet/**'
+      - '.github/workflows/patchfleet-reproduce.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: labs/patchfleet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned external reference and test dependencies
+        run: python -m pip install ruff==0.11.13 numpy==2.2.6 scipy==1.15.3 pytest==8.3.5 lxml==5.4.0 matplotlib==3.10.3 pillow==11.2.1
+      - name: Check tamper rejection and byte preservation
+        run: python research/test_codec.py
+      - name: Fetch immutable public release trees
+        run: python fetch.py "$RUNNER_TEMP/fleet"
+      - name: Independently regenerate every output with Ruff and Git
+        run: |
+          python build.py "$RUNNER_TEMP/fleet" "$RUNNER_TEMP/rebuilt"
+          cmp artifacts/numpy2.fleet.xz "$RUNNER_TEMP/rebuilt/numpy2.fleet.xz"
+      - name: Reproduce deployment on unseen releases and upstream tests
+        run: |
+          python research/incremental_replay.py "$RUNNER_TEMP/fleet" "$RUNNER_TEMP/incremental.json"
+          cmp research/incremental.json "$RUNNER_TEMP/incremental.json"
+          python research/upstream_tests.py "$RUNNER_TEMP/fleet/objects/networkx" "$RUNNER_TEMP/upstream.json"
+          cmp research/upstream.local.json "$RUNNER_TEMP/upstream.json"
+      - name: Publish machine-readable measurements
+        uses: actions/upload-artifact@v4
+        with:
+          name: independently-rebuilt-capsule
+          path: |
+            ${{ runner.temp }}/rebuilt
+            ${{ runner.temp }}/incremental.json
+            ${{ runner.temp }}/upstream.json

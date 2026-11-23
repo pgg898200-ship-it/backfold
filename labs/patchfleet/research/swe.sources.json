@@ -1,0 +1,169 @@
+{
+  "archives": {
+    "20240402_sweagent_gpt4": "ed3da60d2f0f064d4b916b3ebbb1d7612e53e3207444fd4aa63954b27c8a5cb8",
+    "20250225_sweagent_claude-3-7-sonnet": "5a95ffac58a92bccdef3c4e0c0f97d9cd3f450a1d473368cac836539b3fa5590",
+    "20250726_mini-v1.0.0_claude-sonnet-4-20250514": "a869ab8aa7fb1ebf1b62a83e27e99a991fbf3306a494fc0abb114c61c785d94d"
+  },
+  "cases": {
+    "sympy__sympy-13798": [
+      "sympy/sympy",
+      "7121bdf1facdd90d05b6994b4c2e5b2865a4638a"
+    ],
+    "pytest-dev__pytest-5631": [
+      "pytest-dev/pytest",
+      "cb828ebe70b4fa35cd5f9a7ee024272237eab351"
+    ],
+    "sympy__sympy-17318": [
+      "sympy/sympy",
+      "d4e0231b08147337745dcf601e62de7eefe2fb2d"
+    ],
+    "django__django-16100": [
+      "django/django",
+      "c6350d594c359151ee17b0c4f354bb44f28ff69e"
+    ],
+    "sympy__sympy-18211": [
+      "sympy/sympy",
+      "b4f1aa3540fe68d078d76e78ba59d022dd6df39f"
+    ],
+    "sphinx-doc__sphinx-9230": [
+      "sphinx-doc/sphinx",
+      "567ff22716ac258b9edd2c1711d766b440ac0b11"
+    ],
+    "django__django-11880": [
+      "django/django",
+      "06909fe084f87a65459a83bd69d7cdbe4fce9a7c"
+    ],
+    "django__django-13809": [
+      "django/django",
+      "bef6f7584280f1cc80e5e2d80b7ad073a93d26ec"
+    ],
+    "django__django-11740": [
+      "django/django",
+      "003bb34b218adb23d1a7e67932a6ba9b3c4dcc81"
+    ],
+    "django__django-15315": [
+      "django/django",
+      "652c68ffeebd510a6f59e1b56b3e007d07683ad8"
+    ],
+    "astropy__astropy-13453": [
+      "astropy/astropy",
+      "19cc80471739bcb67b7e8099246b391c355023ee"
+    ],
+    "django__django-15731": [
+      "django/django",
+      "93cedc82f29076c824d476354527af1150888e4f"
+    ],
+    "django__django-16454": [
+      "django/django",
+      "1250483ebf73f7a82ff820b94092c63ce4238264"
+    ],
+    "django__django-14787": [
+      "django/django",
+      "004b4620f6f4ad87261e149898940f2dcd5757ef"
+    ],
+    "sphinx-doc__sphinx-9711": [
+      "sphinx-doc/sphinx",
+      "81a4fd973d4cfcb25d01a7b0be62cdb28f82406d"
+    ],
+    "astropy__astropy-8707": [
+      "astropy/astropy",
+      "a85a0747c54bac75e9c3b2fe436b105ea029d6cf"
+    ],
+    "scikit-learn__scikit-learn-25747": [
+      "scikit-learn/scikit-learn",
+      "2c867b8f822eb7a684f0d5c4359e4426e1c9cfe0"
+    ],
+    "sympy__sympy-13031": [
+      "sympy/sympy",
+      "2dfa7457f20ee187fbb09b5b6a1631da4458388c"
+    ],
+    "astropy__astropy-7671": [
+      "astropy/astropy",
+      "a7141cd90019b62688d507ae056298507678c058"
+    ],
+    "django__django-15695": [
+      "django/django",
+      "647480166bfe7532e8c471fef0146e3a17e6c0c9"
+    ],
+    "django__django-15563": [
+      "django/django",
+      "9ffd4eae2ce7a7100c98f681e2b6ab818df384a4"
+    ],
+    "django__django-16502": [
+      "django/django",
+      "246eb4836a6fb967880f838aa0d22ecfdca8b6f1"
+    ],
+    "django__django-12774": [
+      "django/django",
+      "67f9d076cfc1858b94f9ed6d1a5ce2327dcc8d0d"
+    ],
+    "sympy__sympy-14711": [
+      "sympy/sympy",
+      "c6753448b5c34f95e250105d76709fe4d349ca1f"
+    ],
+    "matplotlib__matplotlib-24026": [
+      "matplotlib/matplotlib",
+      "14c96b510ebeba40f573e512299b1976f35b620e"
+    ],
+    "sympy__sympy-13877": [
+      "sympy/sympy",
+      "1659712001810f5fc563a443949f8e3bb38af4bd"
+    ],
+    "sphinx-doc__sphinx-8056": [
+      "sphinx-doc/sphinx",
+      "e188d56ed1248dead58f3f8018c0e9a3f99193f7"
+    ],
+    "django__django-13512": [
+      "django/django",
+      "b79088306513d5ed76d31ac40ab3c15f858946ea"
+    ],
+    "django__django-15957": [
+      "django/django",
+      "f387d024fc75569d2a4a338bfda76cc2f328f627"
+    ],
+    "django__django-13279": [
+      "django/django",
+      "6e9c5ee88fc948e05b4a7d9f82a8861ed2b0343d"
+    ],
+    "pylint-dev__pylint-7080": [
+      "pylint-dev/pylint",
+      "3c5eca2ded3dd2b59ebaf23eb289453b5d2930f0"
+    ],
+    "scikit-learn__scikit-learn-11578": [
+      "scikit-learn/scikit-learn",
+      "dd69361a0d9c6ccde0d2353b00b86e0e7541a3e3"
+    ],
+    "django__django-11964": [
+      "django/django",
+      "fc2b1cc926e34041953738e58fa6ad3053059b22"
+    ],
+    "sphinx-doc__sphinx-8595": [
+      "sphinx-doc/sphinx",
+      "b19bce971e82f2497d67fdacdeca8db08ae0ba56"
+    ],
+    "matplotlib__matplotlib-24570": [
+      "matplotlib/matplotlib",
+      "8f0003ae902952372824c9917975fb372c026a42"
+    ],
+    "sympy__sympy-15875": [
+      "sympy/sympy",
+      "b506169ad727ee39cb3d60c8b3ff5e315d443d8e"
+    ],
+    "django__django-11790": [
+      "django/django",
+      "b1d6b35e146aea83b171c1b921178bbaae2795ed"
+    ],
+    "django__django-12754": [
+      "django/django",
+      "18759b2209ff556aed7f20d83cbf23e3d234e41c"
+    ],
+    "sphinx-doc__sphinx-9673": [
+      "sphinx-doc/sphinx",
+      "5fb51fb1467dc5eea7505402c3c5d9b378d3b441"
+    ],
+    "sympy__sympy-16792": [
+      "sympy/sympy",
+      "09786a173e7a0a488f46dd6000177c23e5d24eed"
+    ]
+  }
+}

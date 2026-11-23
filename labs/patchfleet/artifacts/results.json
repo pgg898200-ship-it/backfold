@@ -1,0 +1,292 @@
+{
+  "leave_latest_release_out": [
+    {
+      "release": "librosa/librosa@0.10.2",
+      "exact_tree": false,
+      "expected_edits": 4,
+      "exact_changed_files": 2,
+      "extra_edits": 0
+    },
+    {
+      "release": "mwaskom/seaborn@v0.13.0",
+      "exact_tree": false,
+      "expected_edits": 2,
+      "exact_changed_files": 0,
+      "extra_edits": 0
+    },
+    {
+      "release": "networkx/networkx@networkx-3.2.1",
+      "exact_tree": false,
+      "expected_edits": 1,
+      "exact_changed_files": 0,
+      "extra_edits": 0
+    },
+    {
+      "release": "nipy/nibabel@5.2.1",
+      "exact_tree": true,
+      "expected_edits": 2,
+      "exact_changed_files": 2,
+      "extra_edits": 0
+    },
+    {
+      "release": "pydata/xarray@v2024.02.0",
+      "exact_tree": true,
+      "expected_edits": 0,
+      "exact_changed_files": 0,
+      "extra_edits": 0
+    },
+    {
+      "release": "scikit-image/scikit-image@v0.23.1",
+      "exact_tree": false,
+      "expected_edits": 2,
+      "exact_changed_files": 0,
+      "extra_edits": 0
+    }
+  ],
+  "rule": "Ruff 0.11.13 NPY201 safe fixes, isolated, py39",
+  "releases": [
+    {
+      "release": "librosa/librosa@0.10.0",
+      "source_tree": "ef0b24fc471f85b31316a25aecb382498ae9626d",
+      "target_tree": "0d75bfcd819572e22cd7e900b2312bb9f8e7575a",
+      "files": 72,
+      "bytes": 1407511,
+      "changed": 4,
+      "patch_bytes": 2704
+    },
+    {
+      "release": "librosa/librosa@0.10.1",
+      "source_tree": "30050476426b416b7bbcf1e2e6da2c39de5f5f71",
+      "target_tree": "d84204ce2fae0a0eb920509804898003d3c1c566",
+      "files": 73,
+      "bytes": 1416206,
+      "changed": 4,
+      "patch_bytes": 2704
+    },
+    {
+      "release": "librosa/librosa@0.10.2",
+      "source_tree": "622e8426befdd9e7277c65b266e937353b390fac",
+      "target_tree": "504df921f62cf1a32674671b17d3076e714667e5",
+      "files": 77,
+      "bytes": 1469016,
+      "changed": 4,
+      "patch_bytes": 2704
+    },
+    {
+      "release": "librosa/librosa@0.9.2",
+      "source_tree": "08937e37d379d70c1b1ddfea7cc031874854e8d2",
+      "target_tree": "1bfd4f3eff18f7b910dd203d03c0c40bd80e0ae1",
+      "files": 65,
+      "bytes": 1210436,
+      "changed": 2,
+      "patch_bytes": 985
+    },
+    {
+      "release": "mwaskom/seaborn@v0.11.2",
+      "source_tree": "0e8fbf7101ee50fd63a7690d2784cc1072beda3b",
+      "target_tree": "a70fe6650a63c8ee3a64695a7bbce098adbf9227",
+      "files": 99,
+      "bytes": 1311363,
+      "changed": 3,
+      "patch_bytes": 3020
+    },
+    {
+      "release": "mwaskom/seaborn@v0.12.1",
+      "source_tree": "4e45b44d37ba4400853fec4ff47bffc1d16e451d",
+      "target_tree": "9fb52b188a03162adfb656c3aed5c386002d0658",
+      "files": 150,
+      "bytes": 1810746,
+      "changed": 3,
+      "patch_bytes": 2956
+    },
+    {
+      "release": "mwaskom/seaborn@v0.12.2",
+      "source_tree": "6ff3c844bc87852aadf0614bf28ce6bc1bc0d367",
+      "target_tree": "bb1ed98959cb8a6104e9be98a5cf2a03079d5442",
+      "files": 153,
+      "bytes": 1844215,
+      "changed": 3,
+      "patch_bytes": 2956
+    },
+    {
+      "release": "mwaskom/seaborn@v0.13.0",
+      "source_tree": "6fd1c3df9104fd66a142e869de4f21f271e1447a",
+      "target_tree": "fd3765db0f445cdd9dba9a504bf2f058a17497e7",
+      "files": 151,
+      "bytes": 1859705,
+      "changed": 2,
+      "patch_bytes": 1355
+    },
+    {
+      "release": "networkx/networkx@networkx-2.8.8",
+      "source_tree": "38e40d95619de39b91e4cbf4175ffbf6327c8e03",
+      "target_tree": "3833b0bebebaf061151a514524c2f6352797ed25",
+      "files": 634,
+      "bytes": 5391855,
+      "changed": 5,
+      "patch_bytes": 3753
+    },
+    {
+      "release": "networkx/networkx@networkx-3.0",
+      "source_tree": "e00b2248ec8a5fe9a49c597b6c1cf122bdd28663",
+      "target_tree": "e3d62e028d7a8057c98b55bfe23516e9d602871c",
+      "files": 622,
+      "bytes": 5564764,
+      "changed": 5,
+      "patch_bytes": 3753
+    },
+    {
+      "release": "networkx/networkx@networkx-3.1",
+      "source_tree": "cc52604cc51c50f7651d5bc08328b0c708896223",
+      "target_tree": "6954096bff4ad23f1e9ddda9a492c1c509b3879f",
+      "files": 629,
+      "bytes": 5697003,
+      "changed": 5,
+      "patch_bytes": 3751
+    },
+    {
+      "release": "networkx/networkx@networkx-3.2.1",
+      "source_tree": "ee644466e163f1df842a5bbccb3a2e761c1b2706",
+      "target_tree": "61f2a1c038b616d548f6239b07218f0c9b1edfbc",
+      "files": 645,
+      "bytes": 5944629,
+      "changed": 1,
+      "patch_bytes": 613
+    },
+    {
+      "release": "nipy/nibabel@5.0.0",
+      "source_tree": "8f93d3db537b927fb678c28867860230c15b241c",
+      "target_tree": "3014310f40f302e36ef193a374b625a7b97639ed",
+      "files": 244,
+      "bytes": 2407364,
+      "changed": 7,
+      "patch_bytes": 5812
+    },
+    {
+      "release": "nipy/nibabel@5.1.0",
+      "source_tree": "fc87dbeade23aa2b34687acbb262f9635cc0f49b",
+      "target_tree": "1fa1677f99e7fb8133fc77b902440f40929a89b9",
+      "files": 246,
+      "bytes": 2428767,
+      "changed": 7,
+      "patch_bytes": 5823
+    },
+    {
+      "release": "nipy/nibabel@5.2.0",
+      "source_tree": "014daf54d04065f495629101dd20586d4f91bdb4",
+      "target_tree": "19fcce1f5328fc8d7cea708bbfe20087daa87731",
+      "files": 248,
+      "bytes": 2445599,
+      "changed": 2,
+      "patch_bytes": 995
+    },
+    {
+      "release": "nipy/nibabel@5.2.1",
+      "source_tree": "8e65558ee3336151055f0e1ba43f5e0281625241",
+      "target_tree": "aa522d2dfe16f466c989bbcf015c6f1125440d8e",
+      "files": 249,
+      "bytes": 2449000,
+      "changed": 2,
+      "patch_bytes": 995
+    },
+    {
+      "release": "pydata/xarray@v2023.10.1",
+      "source_tree": "fe585644d4fe08c033118b64cbf36f1ae4c454ae",
+      "target_tree": "fe585644d4fe08c033118b64cbf36f1ae4c454ae",
+      "files": 184,
+      "bytes": 5237796,
+      "changed": 0,
+      "patch_bytes": 0
+    },
+    {
+      "release": "pydata/xarray@v2023.12.0",
+      "source_tree": "d6b6c8cf4cdf4951be2b06cf719b0a2cee9d5310",
+      "target_tree": "d6b6c8cf4cdf4951be2b06cf719b0a2cee9d5310",
+      "files": 188,
+      "bytes": 5301107,
+      "changed": 0,
+      "patch_bytes": 0
+    },
+    {
+      "release": "pydata/xarray@v2024.01.0",
+      "source_tree": "23e56e9ff0fe8473a31a45eced464e43fb478f24",
+      "target_tree": "23e56e9ff0fe8473a31a45eced464e43fb478f24",
+      "files": 189,
+      "bytes": 5356107,
+      "changed": 0,
+      "patch_bytes": 0
+    },
+    {
+      "release": "pydata/xarray@v2024.02.0",
+      "source_tree": "c1b9398504e70520bed80ec7fbad1eb3cd8556a7",
+      "target_tree": "c1b9398504e70520bed80ec7fbad1eb3cd8556a7",
+      "files": 215,
+      "bytes": 5655273,
+      "changed": 0,
+      "patch_bytes": 0
+    },
+    {
+      "release": "scikit-image/scikit-image@v0.20.0",
+      "source_tree": "c3fccf98294c95888a7d8c8f88cfbd594260e633",
+      "target_tree": "b2aa373286c62e17031958333eb398e1023378f7",
+      "files": 532,
+      "bytes": 3698222,
+      "changed": 17,
+      "patch_bytes": 12120
+    },
+    {
+      "release": "scikit-image/scikit-image@v0.21.0",
+      "source_tree": "f030bf66174a7d67aea6cde3eb88242cc1772333",
+      "target_tree": "817edf7fa7914f7f6ba3814870747cde076185d3",
+      "files": 533,
+      "bytes": 3753131,
+      "changed": 16,
+      "patch_bytes": 11032
+    },
+    {
+      "release": "scikit-image/scikit-image@v0.22.0",
+      "source_tree": "736e14df754deb2f0c00c8aaae441441b2d80517",
+      "target_tree": "5ed289a2505b0bb713ca001b791779bf80c82a3a",
+      "files": 531,
+      "bytes": 3747775,
+      "changed": 2,
+      "patch_bytes": 952
+    },
+    {
+      "release": "scikit-image/scikit-image@v0.23.1",
+      "source_tree": "7fa067e4c972bc2e4a526a1102d603d941e72515",
+      "target_tree": "a0bc67aab349e2f7be249e61d0d88e451d045985",
+      "files": 537,
+      "bytes": 3768128,
+      "changed": 2,
+      "patch_bytes": 952
+    }
+  ],
+  "unique_inputs": 3889,
+  "unique_changed_inputs": 72,
+  "distinct_recipes": 29,
+  "recipe_types": {
+    "replace": 11,
+    "splice": 18
+  },
+  "capsule_bytes": 1928,
+  "capsule_sha256": "afe736b2eb36c1db01e7164eb7915e34ffbdfaf643eded477c758707b156c717",
+  "diffs_concatenated": {
+    "raw": 69935,
+    "xz9": 9172,
+    "zstd19": 9132
+  },
+  "minimal_diffs_concatenated": {
+    "raw": 23864,
+    "xz9": 2724,
+    "zstd19": 2667
+  },
+  "plain_splice_manifest": {
+    "raw": 10125,
+    "xz9": 2476,
+    "zstd19": 2398
+  },
+  "decoder_xz9_bytes": 1660,
+  "thin_git_packs_bytes": 355772,
+  "decoder_source_bytes": 3887
+}

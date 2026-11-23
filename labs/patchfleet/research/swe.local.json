@@ -1,0 +1,19 @@
+{
+  "cases": 40,
+  "records": 120,
+  "nonempty_per_submission": {
+    "20240402_sweagent_gpt4": 39,
+    "20250225_sweagent_claude-3-7-sonnet": 40,
+    "20250726_mini-v1.0.0_claude-sonnet-4-20250514": 40
+  },
+  "base_bytes": 2235026,
+  "framed_original_bytes": 1497958,
+  "roundtrip_sha256": "d0197ed14f53cd991a2f9cc67e74094c4027c67ed84aa05018113ce23b0c4eb5",
+  "zero_mismatches": true,
+  "diff_zstd19": 291525,
+  "wire_zstd19": 283335,
+  "diff_xz9": 286108,
+  "wire_xz9": 277908,
+  "zstd_patch_from_source_bytes": 246729,
+  "wire_decoder_and_encoder_xz9": 1276
+}

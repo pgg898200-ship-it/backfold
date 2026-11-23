@@ -1,0 +1,26 @@
+{
+  "release": "networkx/networkx@networkx-2.8.8",
+  "modules": [
+    "networkx/algorithms/tests/test_distance_measures.py",
+    "networkx/drawing/tests/test_layout.py",
+    "networkx/readwrite/tests/test_gexf.py",
+    "networkx/readwrite/tests/test_graphml.py"
+  ],
+  "before": {
+    "passed": 57,
+    "failure": 85
+  },
+  "after": {
+    "passed": 140,
+    "failure": 2
+  },
+  "transitions": {
+    "passed -> passed": 57,
+    "failure -> passed": 83,
+    "failure -> failure": 2
+  },
+  "remaining_failures": [
+    "networkx.readwrite.tests.test_graphml.TestWriteGraphML::test_numpy_float",
+    "networkx.readwrite.tests.test_graphml.TestXMLGraphML::test_numpy_float"
+  ]
+}

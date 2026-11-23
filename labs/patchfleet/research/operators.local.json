@@ -1,0 +1,68 @@
+{
+  "platform": "x86_64",
+  "attention": {
+    "keys": 32768,
+    "queries": 1024,
+    "channels": 32,
+    "setup_ms": 94.55999700003304,
+    "indexed_ms": 0.1641569979256019,
+    "dense_ms": 149.3631209996238,
+    "max_abs_error": 3.642919299551295e-16,
+    "index_bytes": 17563648,
+    "input_bytes": 8650752
+  },
+  "early_layer": {
+    "dataset": "sklearn digits",
+    "test_images": 450,
+    "model_accuracy": 0.9888888888888889,
+    "rows": [
+      {
+        "bits": 1,
+        "nonzero_fraction": 0.8026388888888889,
+        "max_logit_error": 2.3092638912203256e-14,
+        "preview_accuracy": 0.9177777777777778
+      },
+      {
+        "bits": 2,
+        "nonzero_fraction": 0.7908854166666667,
+        "max_logit_error": 1.9539925233402755e-14,
+        "preview_accuracy": 0.9822222222222222
+      },
+      {
+        "bits": 3,
+        "nonzero_fraction": 0.7842013888888889,
+        "max_logit_error": 1.9539925233402755e-14,
+        "preview_accuracy": 0.9866666666666667
+      },
+      {
+        "bits": 4,
+        "nonzero_fraction": 0.7827256944444444,
+        "max_logit_error": 1.9539925233402755e-14,
+        "preview_accuracy": 0.9888888888888889
+      }
+    ]
+  },
+  "constructed_overlap": [
+    {
+      "width": 1536,
+      "active": 16,
+      "serial_ms": 0.24475900136167184,
+      "parallel_ms": 0.1627905003260821,
+      "relative_error": 3.629949674177624e-07
+    },
+    {
+      "width": 1536,
+      "active": 192,
+      "serial_ms": 0.2454349996696692,
+      "parallel_ms": 0.1773569983924972,
+      "relative_error": 3.527258058966254e-07
+    },
+    {
+      "width": 1536,
+      "active": 1536,
+      "serial_ms": 0.2406269995844923,
+      "parallel_ms": 0.2772275020106463,
+      "relative_error": 3.603292100251565e-07
+    }
+  ]
+}
