@@ -22,7 +22,7 @@ python3 incremental.py "$repo" HEAD fleet.sqlite3
 
 The corpus covers four release tags each for librosa, NetworkX, nibabel, scikit-image, seaborn and xarray. We ran the NumPy team's recommended NPY201 rule, with safe fixes enabled, on each tracked regular Python file using isolated settings. That produced 96 changed file instances across 7,266 files and 81,175,718 input bytes. The edits reduce to 29 distinct programs. Every original non-Python Git object, filename and file mode survives in the output tree. Several releases already needed zero edits.
 
-Git already supplies source blob identities. A short prefix selects an edit program, and a SHA-256 commitment over the full input and output tree IDs verifies the result. This permits small selectors without trusting them for correctness. A modified input or a damaged program cannot silently return an unverified tree. Unrecognized trees are handled by the separate compiler.
+Git already supplies source blob identities. A short prefix selects an edit program, and a SHA-256 commitment over the full input and output tree IDs verifies the result. This permits small selectors without trusting them for correctness. The verifier checks against the published manifest. The capsule SHA-256 is `afe736b2eb36c1db01e7164eb7915e34ffbdfaf643eded477c758707b156c717`. Unrecognized trees are handled by the separate compiler.
 
 | Transfer, all 24 known snapshots | Bytes |
 | --- | ---: |
@@ -52,7 +52,7 @@ cmp artifacts/numpy2.fleet.xz /tmp/fleet-rebuilt/numpy2.fleet.xz
 python3 research/incremental_replay.py /tmp/fleet-work /tmp/incremental.json
 ```
 
-Git and the zstd command are required for the benchmark. The offline decoder requires only Git and Python 3.10+. Source tags and immutable commit IDs are in [sources.lock.json](sources.lock.json). Per-release results, byte counts, codec overhead, and the file-holdout breakdown are in [results.json](artifacts/results.json). The [reproduction workflow](../../.github/workflows/patchfleet-reproduce.yml) rebuilds from the original six projects on a clean Ubuntu runner.
+Git and the zstd command are required for the benchmark. The offline decoder requires only Git and Python 3.10+. Source tags and immutable commit IDs are in [sources.lock.json](sources.lock.json). Per-release results, byte counts, codec overhead, and the file-holdout breakdown are in [results.json](artifacts/results.json). The [reproduction workflow](../../.github/workflows/patchfleet-reproduce.yml) rebuilds from the original six projects on a clean Ubuntu runner. The [public verification run](https://github.com/pgg898200-ship-it/backfold/actions/runs/45130021432) matched the archive bytes and 128 Git trees from the published measurements. Its workflow and benchmark design are maintained in this repository.
 
 The [research directory](research) includes the early-start matrix and scalar Laplace attention prototypes, externally authored tests, historical edits and a separate lossless coding-agent patch benchmark. These measure different outputs. Benchmarks of the scalar head use its own normalized kernel. The scripts do not fit or evaluate a repository-language model.
 
@@ -89,9 +89,11 @@ To package your own outputs, provide a JSON list in execution order. Use full Gi
 ```
 
 ```sh
-python3 bundle.py pack clones tasks.json work.pfw
+python3 bundle.py pack clones tasks.json work.pfw --mode columns
 python3 bundle.py unpack clones work.pfw restored
 ```
+
+On the 460-task holdout, choosing the column representation directly produced exactly the same archive in 12.61 seconds. Searching all four modes took 42.47 seconds. Stock source-aware zstd -22 took 18.84 seconds. Decode medians were 0.161 seconds for Patchfleet and 0.108 seconds for stock zstd. These are three local CPU runs with the source dictionary already assembled. Fetch and dictionary-discovery time are additional. [Codec costs](research/codec-cost.local.json) · [Single-pass encoder](research/codec-fixed.local.json).
 
 Restore writes numbered patch files to a new directory. The packer checks every byte before publishing an archive. For byte-exact benchmark replication, use zstd 1.5.7. To rerun the full held-out comparison:
 
@@ -101,3 +103,11 @@ python3 research/partitions.py /tmp/agent-data /tmp/partitions.json
 ```
 
 Data provenance: [SWE-bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified) and the [official submissions archive](https://github.com/SWE-bench/experiments). The external task grades belong to the original submissions. Patchfleet's comparisons concern recoverability and transfer size. No leaderboard rank is claimed.
+
+## Early-start inference
+
+The alternative matrix prototype starts a down-projection while the preceding activation is provisional. Linearity permits an exact correction `W @ (h - preview)` in real arithmetic. It saves work when enough entries of the correction are zero.
+
+We tried it in the first 512→2048→512 MLP of the released EleutherAI Pythia-70M checkpoint, using its tokenizer and 1,536 tokens of upstream code. Even with **511 of 512 input channels already present**, arrival of the last channel changed **94.2%** of the fp16-rounded intermediate activations and 99.99% in fp32. On this checkpoint and preview scheme, an exact sparse correction has little work to skip. [Checkpoint, immutable weight hashes and reproduction](research/checkpoint_preview.py) · [Measured correction densities](research/checkpoint.json).
+
+The indexed scalar Laplace attention head also runs independently. Its measured numerical agreement is for that kernel. Its training quality on code retrieval and compatibility with conventional softmax attention remain open. [Operator prototypes](research/operators.py).

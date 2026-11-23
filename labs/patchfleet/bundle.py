@@ -95,11 +95,13 @@ def zstd(data, base=None, decode=False):
         ).stdout
 
 
-def encode(rows, manifest, basis):
+def encode(rows, manifest, basis, *, strategy="auto"):
     raw = pack_rows(rows)
     digest = hashlib.sha256(raw).digest()
     candidates = {}
-    for mode in MODES:
+    if strategy != "auto" and strategy not in MODES:
+        raise ValueError("Unknown encoder strategy")
+    for mode in MODES if strategy == "auto" else (strategy,):
         b = None if mode == "raw" else rendered(basis) if mode == "render" else basis
         encoded = zstd(transform(mode, rows), b)
         meta = (
@@ -199,6 +201,12 @@ if __name__ == "__main__":
     p.add_argument("repos", type=Path, help="Git clones named owner/repository")
     p.add_argument("input", type=Path)
     p.add_argument("output", type=Path)
+    p.add_argument(
+        "--mode",
+        choices=("auto", *MODES),
+        default="auto",
+        help="Select a representation directly or compare all four",
+    )
     args = p.parse_args()
     reader = lambda owner, base, path: git_source(args.repos, owner, base, path)
     if args.operation == "pack":
@@ -212,7 +220,7 @@ if __name__ == "__main__":
             for r in spec
         ]
         meta, rows, basis = collect(groups, reader)
-        archive, sizes = encode(rows, meta, basis)
+        archive, sizes = encode(rows, meta, basis, strategy=args.mode)
         if decode(archive, lambda m: dictionary(m, reader)) != rows:
             raise ValueError("Round trip failed")
         with args.output.open("xb") as f:

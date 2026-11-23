@@ -1,0 +1,34 @@
+{
+  "model": "EleutherAI/pythia-70m",
+  "revision": "a39f36b100fe8a5377810d56c3f4789b9c53ac42",
+  "tokens": 1536,
+  "hidden_width": 512,
+  "mlp_width": 2048,
+  "dtype": "float16 checkpoint, fp32 matrix products and GELU",
+  "results": [
+    {
+      "late_input_channels": 1,
+      "preview_channels": 511,
+      "corrected_fraction_fp32": 0.9999221165974935,
+      "corrected_fraction_fp16": 0.9421564737955729,
+      "relative_error_using_preview_alone": 0.031939975917339325,
+      "relative_error_after_correction": 3.538102930633613e-07
+    },
+    {
+      "late_input_channels": 8,
+      "preview_channels": 504,
+      "corrected_fraction_fp32": 0.9999462763468424,
+      "corrected_fraction_fp16": 0.988408088684082,
+      "relative_error_using_preview_alone": 0.10477705299854279,
+      "relative_error_after_correction": 3.5394137398725434e-07
+    },
+    {
+      "late_input_channels": 64,
+      "preview_channels": 448,
+      "corrected_fraction_fp32": 0.9999545415242513,
+      "corrected_fraction_fp16": 0.9954128265380859,
+      "relative_error_using_preview_alone": 0.27003973722457886,
+      "relative_error_after_correction": 3.4870728882197e-07
+    }
+  ]
+}
