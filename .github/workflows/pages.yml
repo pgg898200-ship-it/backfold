@@ -43,6 +43,9 @@ jobs:
           cp docs/ARCHITECTURE.md _site/ARCHITECTURE.md
           cp docs/SUBNORMAL_KALMAN.md _site/SUBNORMAL_KALMAN.md
           cp benchmarks/results.json _site/results.json
+          mkdir -p _site/patchfleet
+          cp -R labs/patchfleet/site/. _site/patchfleet/
+          cp labs/patchfleet/artifacts/numpy2.fleet.xz labs/patchfleet/artifacts/results.json labs/patchfleet/fleet.py _site/patchfleet/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

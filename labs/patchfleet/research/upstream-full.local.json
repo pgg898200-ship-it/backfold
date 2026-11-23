@@ -1,0 +1,33 @@
+{
+  "release": "networkx/networkx@networkx-2.8.8",
+  "modules": [
+    "networkx"
+  ],
+  "before": {
+    "skipped": 17,
+    "passed": 5027,
+    "failure": 115
+  },
+  "after": {
+    "skipped": 17,
+    "passed": 5133,
+    "failure": 9
+  },
+  "transitions": {
+    "skipped -> skipped": 17,
+    "passed -> passed": 5027,
+    "failure -> passed": 106,
+    "failure -> failure": 9
+  },
+  "remaining_failures": [
+    "networkx.linalg.tests.test_algebraic_connectivity.TestAlgebraicConnectivity::test_buckminsterfullerene[tracemin_pcg-True-0.0811339153799775-normalized_laplacian_matrix]",
+    "networkx.linalg.tests.test_algebraic_connectivity.TestAlgebraicConnectivity::test_buckminsterfullerene[tracemin_lu-True-0.0811339153799775-normalized_laplacian_matrix]",
+    "networkx.linalg.tests.test_algebraic_connectivity.TestAlgebraicConnectivity::test_buckminsterfullerene[lanczos-True-0.0811339153799775-normalized_laplacian_matrix]",
+    "networkx.linalg.tests.test_algebraic_connectivity.TestAlgebraicConnectivity::test_buckminsterfullerene[lobpcg-True-0.0811339153799775-normalized_laplacian_matrix]",
+    "networkx.linalg.tests.test_laplacian.TestLaplacian::test_normalized_laplacian",
+    "networkx.linalg.tests.test_spectrum.TestSpectrum::test_normalized_laplacian_spectrum",
+    "networkx.readwrite.tests.test_graphml.TestWriteGraphML::test_numpy_float",
+    "networkx.readwrite.tests.test_graphml.TestXMLGraphML::test_numpy_float",
+    "networkx.tests.test_lazy_imports::test_lazy_import_nonbuiltins"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "20240402_sweagent_gpt4": {
+    "patches": 460,
+    "raw_zstd19": 166249,
+    "delta_zstd19": 142491,
+    "columns_zstd19": 127718
+  },
+  "20250225_sweagent_claude-3-7-sonnet": {
+    "patches": 460,
+    "raw_zstd19": 188735,
+    "delta_zstd19": 158525,
+    "columns_zstd19": 127364
+  },
+  "20250726_mini-v1.0.0_claude-sonnet-4-20250514": {
+    "patches": 460,
+    "raw_zstd19": 1576557,
+    "delta_zstd19": 1316617,
+    "columns_zstd19": 940996
+  },
+  "heldout_without_largest_case": {
+    "patches": 1377,
+    "raw_zstd19": 1506003,
+    "delta_zstd19": 1309617,
+    "columns_zstd19": 851134
+  }
+}

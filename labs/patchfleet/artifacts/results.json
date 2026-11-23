@@ -286,7 +286,7 @@
     "xz9": 2476,
     "zstd19": 2398
   },
-  "decoder_xz9_bytes": 1660,
+  "decoder_xz9_bytes": 1708,
   "thin_git_packs_bytes": 355772,
-  "decoder_source_bytes": 3887
+  "decoder_source_bytes": 4151
 }

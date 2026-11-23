@@ -43,3 +43,65 @@ jobs:
             ${{ runner.temp }}/rebuilt
             ${{ runner.temp }}/incremental.json
             ${{ runner.temp }}/upstream.json
+  commit-stream:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: labs/patchfleet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install ruff==0.11.13
+      - name: Fetch 128 actual first-parent commits plus their objects
+        run: |
+          git init --bare "$RUNNER_TEMP/scikit"
+          git -C "$RUNNER_TEMP/scikit" fetch --quiet --shallow-since=2023-07-01 --no-tags https://github.com/scikit-image/scikit-image.git a160f384523ac70173d069954b7084bee79fb68e
+      - name: Check every intermediate tree against two cached Git and Ruff pipelines
+        run: |
+          python research/commit_stream.py "$RUNNER_TEMP/scikit" "$RUNNER_TEMP/commits.json"
+          python research/parent_baseline.py "$RUNNER_TEMP/scikit" "$RUNNER_TEMP/parent.json" "$RUNNER_TEMP/commits.json"
+          python -c 'import json,os; from pathlib import Path; a=json.loads((Path(os.environ["RUNNER_TEMP"])/"commits.json").read_text()); b=json.load(open("research/commits.local.json")); assert all(a[k]==b[k] for k in ("parsed","file_instances","tree_sequence_sha256")); print(json.dumps(a,indent=2))'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: commit-stream-measurements
+          path: |
+            ${{ runner.temp }}/commits.json
+            ${{ runner.temp }}/parent.json
+  agent-patches:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: labs/patchfleet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the pinned external compressor
+        run: |
+          git clone --quiet --depth 1 --branch v1.5.7 https://github.com/facebook/zstd.git "$RUNNER_TEMP/zstd"
+          test "$(git -C "$RUNNER_TEMP/zstd" rev-parse HEAD)" = f8745da6ff1ad1e7bab384bd1f9d742439278e99
+          make -s -C "$RUNNER_TEMP/zstd/programs" -j2 zstd
+          echo "$RUNNER_TEMP/zstd/programs" >> "$GITHUB_PATH"
+      - name: Download original submissions and verify every held-out patch byte
+        run: |
+          python research/holdout.py "$RUNNER_TEMP/agent-data" "$RUNNER_TEMP/heldout.json" heldout
+          python -c 'import json,os; from pathlib import Path; a=json.loads((Path(os.environ["RUNNER_TEMP"])/"heldout.json").read_text()); b=json.load(open("research/heldout.json")); assert all(a[k]==b[k] for k in ("verified_sha256","archive_sha256","archive_bytes","records")); print(json.dumps(a,indent=2))'
+      - name: Reproduce the strongest stock zstd comparisons
+        run: |
+          python research/partitions.py "$RUNNER_TEMP/agent-data" "$RUNNER_TEMP/partitions.json"
+          cmp research/partitions.json "$RUNNER_TEMP/partitions.json"
+          cd "$RUNNER_TEMP/agent-data"
+          zstd -q --ultra -22 --long=27 --patch-from=heldout.base -c heldout.raw > baseline.zst
+          zstd -q -d --long=27 --patch-from=heldout.base -c baseline.zst | cmp heldout.raw -
+          python -c 'import os; from pathlib import Path; a=Path("baseline.zst").stat().st_size; b=Path("heldout.pfw").stat().st_size; assert b<a; print("stock",a,"patchfleet",b)'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: held-out-coding-agent-measurements
+          path: |
+            ${{ runner.temp }}/heldout.json
+            ${{ runner.temp }}/partitions.json

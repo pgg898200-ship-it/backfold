@@ -1,0 +1,50 @@
+[
+  {
+    "release": "scikit-image/scikit-image@v0.22.0",
+    "path": "doc/examples/features_detection/plot_windowed_histogram.py",
+    "source": "https://raw.githubusercontent.com/scikit-image/scikit-image/441fe68b95a86d4ae2a351311a0c39a4232b6521/doc/examples/features_detection/plot_windowed_histogram.py",
+    "before": "49983bc2f4aab5de311dc5644f7e0b18739e1ca6",
+    "after": "03a7dd03debb5614567ed63067e178bbe59796d1",
+    "recipe": [
+      "replace",
+      [
+        [
+          "aW5mdHk=",
+          "aW5m"
+        ]
+      ]
+    ]
+  },
+  {
+    "release": "networkx/networkx@networkx-2.8.8",
+    "path": "networkx/readwrite/graphml.py",
+    "source": "https://raw.githubusercontent.com/networkx/networkx/9256ef670730b741105a9264197353004bd6719f/networkx/readwrite/graphml.py",
+    "before": "0a1759221ca8d12910b97887d0f90b5865021cad",
+    "after": "c4b1ad0f1d96d5ec1298c3dd17e37ae97faf3769",
+    "recipe": [
+      "replace",
+      [
+        [
+          "ZmxvYXRf",
+          "ZmxvYXQ2NA=="
+        ]
+      ]
+    ]
+  },
+  {
+    "release": "nipy/nibabel@5.2.1",
+    "path": "nibabel/ecat.py",
+    "source": "https://raw.githubusercontent.com/nipy/nibabel/1df3b610e6e501d6aa000a8076ec23a21701dafe/nibabel/ecat.py",
+    "before": "1db902d10a2becd3d09074e3adca4a88ad3cf235",
+    "after": "24d18d8cd6a058be8fda8932d08a0b87a5f9c795",
+    "recipe": [
+      "replace",
+      [
+        [
+          "cm93X3N0YWNr",
+          "dnN0YWNr"
+        ]
+      ]
+    ]
+  }
+]

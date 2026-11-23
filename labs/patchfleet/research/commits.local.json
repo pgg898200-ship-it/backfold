@@ -1,0 +1,18 @@
+{
+  "project": "scikit-image/scikit-image",
+  "first": "8bebbbcda51a3574840c0d0cab2aa82535329bd7",
+  "last": "a160f384523ac70173d069954b7084bee79fb68e",
+  "commits": 128,
+  "tree_sequence_sha256": "262b0692edc4be2c55db8f9ce25e08aacb3c44a1ec6b5f0bf6d52455756bcdd6",
+  "parsed": 914,
+  "file_instances": 68500,
+  "opened_subtrees": 691,
+  "reused_subtrees": 2807,
+  "distinct_output_trees": 127,
+  "changed_snapshot_count": 84,
+  "compiler_seconds": 1.4167511880077654,
+  "baseline_seconds": 4.634649781972257,
+  "compiler_p50_ms": 10.87967750027019,
+  "baseline_p50_ms": 33.37806100171292,
+  "reverse_replay_seconds": 0.1847918209969066
+}

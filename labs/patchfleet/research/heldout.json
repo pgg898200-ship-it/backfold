@@ -1,0 +1,21 @@
+{
+  "split": "heldout",
+  "cases": 460,
+  "records": 1380,
+  "nonempty": 1349,
+  "framed_input_bytes": 12252894,
+  "source_bytes": 30102631,
+  "sum_codec_and_cli_xz9": 2668,
+  "verified_sha256": "4156f2f084aff43cc17f6e66be0cb4e729331db6d934d75e71e1939a829205d7",
+  "archive_bytes": 1089297,
+  "mode": "columns",
+  "charged_archive_bytes": {
+    "raw": 1754377,
+    "delta": 1557915,
+    "columns": 1089297,
+    "render": 1113962
+  },
+  "plain_xz9": 1705456,
+  "raw_zstd19_only": 1754336,
+  "archive_sha256": "479891e45086d459339a8affddf42c73b0601a31c8c363c2d56fcb1a6efb377a"
+}
