@@ -68,6 +68,8 @@ On 128 consecutive scikit-image first-parent commits the compiler handed **914 o
 
 ## Archive an agent fleet's actual patches
 
+[Download Patchfleet Archive 1.0.0](https://pgg898200-ship-it.github.io/backfold/patchfleet/releases/patchfleet-archive-1.0.0.zip) · [Verify the ZIP and view release measurements](https://pgg898200-ship-it.github.io/backfold/patchfleet/#archive)
+
 **1,380 held-out coding-agent outputs fit in 1,089,297 bytes.** The input is the exact submitted patch text from three public SWE-bench Verified runs. The receiver already has the source repositories. The output reconstructs every patch byte, including generated files, comments, hunk headers and empty submissions. It preserves record order. Submitter metadata can be kept separately.
 
 The encoder separates each patch line's leading diff marker from its body, restoring source code to a representation a stock delta compressor can match. It also tries the raw stream, the standard source dictionary, and source rendered as diff lines. The selected archive includes its mode, source lookup manifest, and a SHA-256 of the original records. The receiver supplies 30,102,631 bytes of referenced source for this workload. The manifest identifies every required commit and path. The compressed stand-alone Python tool adds roughly 3 KB to a first download. The format targets teams with local Git clones.
@@ -78,7 +80,9 @@ The encoder separates each patch line's leading diff marker from its body, resto
 | Brotli quality 11 | 1,705,074 |
 | xdelta3 then xz -9 | 1,673,532 |
 | Source-aware zstd -22, 128 MiB window | 1,357,083 |
-| Patchfleet, with source manifest and digest | **1,089,297** |
+| Patchfleet level 12, with source manifest and digest | 1,225,677 |
+| Patchfleet default level 19 | 1,089,297 |
+| Patchfleet level 22 | **1,046,922** |
 
 The 40 design tasks were selected by hashing the 500 public instance IDs. The other 460 constitute the holdout. In the held-out set 1,349 records contained edits. A separate run per submission also reduced bytes against the corresponding stock zstd -19 source-delta wrapper for each of the three agents. [Held-out measurements](research/heldout.json) · [Other codecs](research/strong-codecs.json) · [Per-project and per-issue packing](research/partitions.json) · [Results by submitter](research/strata.json).
 
@@ -89,17 +93,20 @@ To package your own outputs, provide a JSON list in execution order. Use full Gi
 ```
 
 ```sh
-python3 bundle.py pack clones tasks.json work.pfw --mode columns
+python3 bundle.py pack clones tasks.json work.pfw
 python3 bundle.py unpack clones work.pfw restored
 ```
 
-On the 460-task holdout, choosing the column representation directly produced exactly the same archive in 12.61 seconds. Searching all four modes took 42.47 seconds. Stock source-aware zstd -22 took 18.84 seconds. Decode medians were 0.161 seconds for Patchfleet and 0.108 seconds for stock zstd. These are three local CPU runs with the source dictionary already assembled. Fetch and dictionary-discovery time are additional. [Codec costs](research/codec-cost.local.json) · [Single-pass encoder](research/codec-fixed.local.json).
+Version 1.0 selects columns directly when referenced source is available. Level 12 favors encoding speed. Level 22 uses a 128 MiB window for compact transfer. All three settings restore the same records in the original PFW1 format. Use `--mode auto` to search four representations or `--mode raw` to pack without a source checkout. [Release profile results](research/release-1.0.0.local.json).
+
+In the original timing study on the 460-task holdout, choosing the column representation directly produced exactly the same archive in 12.61 seconds. Searching all four modes took 42.47 seconds. Stock source-aware zstd -22 took 18.84 seconds. Decode medians were 0.161 seconds for Patchfleet and 0.108 seconds for stock zstd. These are three local CPU runs with the source dictionary already assembled. Fetch and dictionary-discovery time are additional. [Codec costs](research/codec-cost.local.json) · [Single-pass encoder](research/codec-fixed.local.json).
 
 Restore writes numbered patch files to a new directory. The packer checks every byte before publishing an archive. For byte-exact benchmark replication, use zstd 1.5.7. To rerun the full held-out comparison:
 
 ```sh
 python3 research/holdout.py /tmp/agent-data /tmp/heldout.json heldout
 python3 research/partitions.py /tmp/agent-data /tmp/partitions.json
+python3 research/release_profiles.py /tmp/agent-data
 ```
 
 Data provenance: [SWE-bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified) and the [official submissions archive](https://github.com/SWE-bench/experiments). The external task grades belong to the original submissions. Patchfleet's comparisons concern recoverability and transfer size. No leaderboard rank is claimed.

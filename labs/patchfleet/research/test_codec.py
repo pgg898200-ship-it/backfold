@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -71,6 +73,61 @@ class CodecTests(unittest.TestCase):
         corrupt[10] ^= 1
         with self.assertRaises(ValueError):
             bundle.decode(bytes(corrupt), lambda m: b"")
+
+    def test_archive_cli_release(self):
+        def cli(*args):
+            subprocess.run(
+                [sys.executable, bundle.__file__, *args],
+                check=True,
+                capture_output=True,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "clones" / "owner" / "repo"
+            repo.mkdir(parents=True)
+            git(repo, "init", "-q")
+            (repo / "a file").write_bytes(b"one\ntwo\n")
+            git(repo, "add", ".")
+            git(
+                repo,
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "base",
+            )
+            commit = git(repo, "rev-parse", "HEAD").decode().strip()
+            rows = [b"--- a/a file\n--- a/missing\n one\r\n-two\n+three", b"", b" +\n+"]
+            for i, row in enumerate(rows):
+                (root / f"{i}.patch").write_bytes(row)
+            spec = [
+                {
+                    "repo": "owner/repo",
+                    "commit": commit,
+                    "patches": [f"{i}.patch" for i in range(3)],
+                }
+            ]
+            tasks = root / "tasks.json"
+            tasks.write_text(json.dumps(spec))
+            for name, options, clones in (
+                ("default", [], root / "clones"),
+                ("compact", ["--level", "22"], root / "clones"),
+                ("raw", ["--mode", "raw"], root / "absent"),
+            ):
+                archive = root / (name + ".pfw")
+                cli("pack", clones, tasks, archive, *options)
+                self.assertEqual(
+                    archive.read_bytes()[4],
+                    bundle.MODES.index("raw" if name == "raw" else "columns"),
+                )
+                cli("unpack", clones, archive, root / name)
+                restored = [
+                    path.read_bytes() for path in sorted((root / name).iterdir())
+                ]
+                self.assertEqual(restored, rows)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,22 @@
+{
+  "records": 1380,
+  "verified_sha256": "4156f2f084aff43cc17f6e66be0cb4e729331db6d934d75e71e1939a829205d7",
+  "zstd_version": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+  "profiles": {
+    "12": {
+      "archive_bytes": 1225677,
+      "archive_sha256": "871cbc915ab0812204a2155b89ff09a624e43cc7aee68fedacdf80a48b72e92c",
+      "encode_seconds": 1.883
+    },
+    "19": {
+      "archive_bytes": 1089297,
+      "archive_sha256": "479891e45086d459339a8affddf42c73b0601a31c8c363c2d56fcb1a6efb377a",
+      "encode_seconds": 16.96
+    },
+    "22": {
+      "archive_bytes": 1046922,
+      "archive_sha256": "d485a7607b5969fabf2f08282647eab3dba1c70852195476e3eafa9d5b655acb",
+      "encode_seconds": 21.651
+    }
+  }
+}

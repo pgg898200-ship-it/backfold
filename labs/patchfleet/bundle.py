@@ -1,6 +1,7 @@
 """Archive agent-generated patches using their Git base as a shared dictionary."""
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -11,6 +12,7 @@ import tempfile
 
 MAGIC = b"PFW1"
 MODES = ("raw", "delta", "columns", "render")
+PREFIXES = tuple(b"" if code == ord("=") else bytes([code]) for code in range(256))
 
 
 def pack_rows(rows):
@@ -40,17 +42,19 @@ def split_lines(data):
 def separate(rows):
     markers, content = [], []
     for data in rows:
-        flags, body = bytearray(), bytearray()
-        for line in split_lines(data):
-            if line[:1] in (b" ", b"-", b"+"):
-                flags.extend(line[:1])
-                body.extend(line[1:])
+        lines = data.split(b"\n")
+        flags = bytearray()
+        # split leaves a sentinel after a terminating newline (and for an empty patch).
+        count = len(lines) if lines[-1] else len(lines) - 1
+        for i in range(count):
+            line = lines[i]
+            if line and line[0] in b" +-":
+                flags.append(line[0])
+                lines[i] = line[1:]
             else:
-                flags.extend(b"=")
-                body.extend(line)
-        # A final standalone prefix represents an empty unterminated body line.
-        markers.append(bytes(flags))
-        content.append(bytes(body))
+                flags.append(ord("="))
+        markers.append(flags)
+        content.append(b"\n".join(lines))
     return pack_rows(markers + content)
 
 
@@ -61,13 +65,17 @@ def join_columns(data):
     n = len(rows) // 2
     result = []
     for flags, body in zip(rows[:n], rows[n:]):
-        lines = split_lines(body)
-        if len(lines) + 1 == len(flags):
-            lines.append(b"")
-        if len(lines) != len(flags):
+        lines = body.split(b"\n")
+        # A lone final marker has an empty body and no terminating newline.
+        if len(lines) == len(flags):
+            tail = b""
+        elif len(lines) == len(flags) + 1 and not lines[-1]:
+            lines.pop()
+            tail = b"\n" if flags else b""
+        else:
             raise ValueError("Inconsistent column lengths")
         result.append(
-            b"".join((b"" if f == 61 else bytes([f])) + s for f, s in zip(flags, lines))
+            b"\n".join(PREFIXES[f] + line for f, line in zip(flags, lines)) + tail
         )
     return result
 
@@ -78,48 +86,56 @@ def rendered(basis):
     )
 
 
-def transform(mode, rows):
-    return separate(rows) if mode == "columns" else pack_rows(rows)
-
-
-def zstd(data, base=None, decode=False):
+def zstd(data, base=None, decode=False, *, level=19):
     with tempfile.TemporaryDirectory() as tmp:
         command = ["zstd", "-q", "-c"]
         if base:
             path = Path(tmp) / "base"
             path.write_bytes(base)
             command.append(f"--patch-from={path}")
-        command += ["-d"] if decode else ["-19", f"--stream-size={len(data)}"]
+        if decode:
+            command.append("-d")
+        else:
+            if level > 19:
+                command.extend(["--ultra", "--long=27"])
+            command.extend([f"-{level}", f"--stream-size={len(data)}"])
         return subprocess.run(
             command, input=data, check=True, capture_output=True
         ).stdout
 
 
-def encode(rows, manifest, basis, *, strategy="auto"):
-    raw = pack_rows(rows)
-    digest = hashlib.sha256(raw).digest()
-    candidates = {}
+def encode(rows, manifest, basis, *, strategy="auto", level=19):
     if strategy != "auto" and strategy not in MODES:
         raise ValueError("Unknown encoder strategy")
+    raw = pack_rows(rows)
+    digest = hashlib.sha256(raw).digest()
+    header = b""
+    if strategy != "raw":
+        meta = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        header = zstd(meta)
+    sizes = {}
+    best = None
     for mode in MODES if strategy == "auto" else (strategy,):
-        b = None if mode == "raw" else rendered(basis) if mode == "render" else basis
-        encoded = zstd(transform(mode, rows), b)
-        meta = (
-            b""
-            if mode == "raw"
-            else json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
-        )
-        header = zstd(meta) if meta else b""
-        candidates[mode] = (
-            MAGIC
-            + bytes([MODES.index(mode)])
-            + digest
-            + struct.pack(">I", len(header))
-            + header
-            + encoded
-        )
-    chosen = min(candidates, key=lambda key: len(candidates[key]))
-    return candidates[chosen], {key: len(val) for key, val in candidates.items()}
+        reference = None if mode == "raw" else basis
+        if mode == "render":
+            reference = rendered(basis)
+        data = separate(rows) if mode == "columns" else raw
+        payload = zstd(data, reference, level=level)
+        lookup = b"" if mode == "raw" else header
+        size = 41 + len(lookup) + len(payload)
+        sizes[mode] = size
+        if best is None or size < len(best):
+            best = b"".join(
+                (
+                    MAGIC,
+                    bytes([MODES.index(mode)]),
+                    digest,
+                    struct.pack(">I", len(lookup)),
+                    lookup,
+                    payload,
+                )
+            )
+    return best, sizes
 
 
 def decode(bundle, source):
@@ -141,33 +157,87 @@ def decode(bundle, source):
 def names(rows):
     paths = set()
     for row in rows:
-        for line in split_lines(row):
-            if line.startswith(b"--- a/"):
-                try:
-                    path = line[6:].rstrip(b"\r\n").split(b"\t", 1)[0].decode()
-                except UnicodeDecodeError:
-                    continue
-                rel = PurePosixPath(path)
-                if path and not rel.is_absolute() and ".." not in rel.parts:
-                    paths.add(path)
+        for match in re.finditer(rb"^--- a/(.*)$", row, re.MULTILINE):
+            try:
+                path = match[1].rstrip(b"\r").split(b"\t", 1)[0].decode()
+            except UnicodeDecodeError:
+                continue
+            rel = PurePosixPath(path)
+            if path and not rel.is_absolute() and ".." not in rel.parts:
+                paths.add(path)
     return sorted(paths)
 
 
+class GitSource:
+    """Read pinned blobs through one Git process for the current repository."""
+
+    def __init__(self, directory):
+        self.directory = directory
+        self.project = None
+        self.process = None
+
+    def close(self):
+        if self.process is not None:
+            self.process.stdin.close()
+            self.process.stdout.close()
+            self.process.wait()
+            self.process = self.project = None
+
+    def __call__(self, project, commit, path):
+        if not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", commit):
+            raise ValueError("Expected full Git commit ID")
+        if self.project != project:
+            if not re.fullmatch(
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", project
+            ) or ".." in project.split("/"):
+                raise ValueError("Expected owner/repository")
+            repo = self.directory / project
+            if not repo.is_dir():
+                raise FileNotFoundError(repo)
+            self.close()
+            proc = subprocess.Popen(
+                ["git", "-C", str(repo), "cat-file", "--batch"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+            )
+            self.process = proc
+            self.project = project
+        query = (commit + ":" + path).encode()
+        if b"\0" in query:
+            raise ValueError("NUL in Git lookup path")
+        if b"\n" in query:
+            # A legacy manifest can refer to a filename outside the batch line protocol.
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(self.directory / project),
+                    "cat-file",
+                    "blob",
+                    commit + ":" + path,
+                ],
+                capture_output=True,
+            )
+            return result.stdout if result.returncode == 0 else None
+        proc = self.process
+        proc.stdin.write(query + b"\n")
+        proc.stdin.flush()
+        header = proc.stdout.readline()
+        if header == query + b" missing\n":
+            return None
+        fields = header.split()
+        if len(fields) != 3:
+            raise ValueError("Unexpected Git batch response")
+        size = int(fields[2])
+        data = proc.stdout.read(size)
+        if len(data) != size or proc.stdout.read(1) != b"\n":
+            raise ValueError("Incomplete Git object")
+        return data if fields[1] == b"blob" else None
+
+
 def git_source(directory, project, commit, path):
-    if not re.fullmatch(
-        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", project
-    ) or ".." in project.split("/"):
-        raise ValueError("Expected owner/repository")
-    if not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", commit):
-        raise ValueError("Expected full Git commit ID")
-    repo = directory / project
-    if not repo.is_dir():
-        raise FileNotFoundError(repo)
-    r = subprocess.run(
-        ["git", "-C", str(repo), "cat-file", "blob", commit + ":" + path],
-        capture_output=True,
-    )
-    return r.stdout if r.returncode == 0 else None
+    with closing(GitSource(directory)) as source:
+        return source(project, commit, path)
 
 
 def collect(groups, source):
@@ -195,8 +265,11 @@ def dictionary(manifest, source):
     return bytes(out)
 
 
-if __name__ == "__main__":
+def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--version", action="version", version="Patchfleet Archive 1.0.0 (PFW1)"
+    )
     p.add_argument("operation", choices=("pack", "unpack"))
     p.add_argument("repos", type=Path, help="Git clones named owner/repository")
     p.add_argument("input", type=Path)
@@ -204,11 +277,22 @@ if __name__ == "__main__":
     p.add_argument(
         "--mode",
         choices=("auto", *MODES),
-        default="auto",
-        help="Select a representation directly or compare all four",
+        help="Default: columns with a Git base, raw otherwise. Use auto to compare all four.",
+    )
+    p.add_argument(
+        "--level",
+        type=int,
+        choices=range(1, 23),
+        metavar="1..22",
+        default=19,
+        help="zstd payload compression level (default 19, compact 22, fast 12)",
     )
     args = p.parse_args()
-    reader = lambda owner, base, path: git_source(args.repos, owner, base, path)
+    with closing(GitSource(args.repos)) as reader:
+        run(args, reader)
+
+
+def run(args, reader):
     if args.operation == "pack":
         spec = json.loads(args.input.read_text())
         groups = [
@@ -219,8 +303,16 @@ if __name__ == "__main__":
             )
             for r in spec
         ]
-        meta, rows, basis = collect(groups, reader)
-        archive, sizes = encode(rows, meta, basis, strategy=args.mode)
+        if args.mode == "raw":
+            meta, rows, basis = (
+                [],
+                [row for _, _, patches in groups for row in patches],
+                b"",
+            )
+        else:
+            meta, rows, basis = collect(groups, reader)
+        mode = args.mode or ("columns" if basis else "raw")
+        archive, sizes = encode(rows, meta, basis, strategy=mode, level=args.level)
         if decode(archive, lambda m: dictionary(m, reader)) != rows:
             raise ValueError("Round trip failed")
         with args.output.open("xb") as f:
@@ -231,3 +323,7 @@ if __name__ == "__main__":
         args.output.mkdir(exist_ok=False)
         for i, data in enumerate(rows):
             (args.output / f"{i:06}.patch").write_bytes(data)
+
+
+if __name__ == "__main__":
+    main()
